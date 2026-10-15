@@ -1,7 +1,8 @@
+{ config, ... }:
 {
   system.autoUpgrade = {
     enable = true;
-    flake = "github:alx-alexpark/server-cfg#imposter4";
+    flake = "github:alx-alexpark/server-cfg#${config.networking.hostName}";
     # flake.lock is bumped daily by .github/workflows/update-flake.yml
     flags = [ "--refresh" ];
     # run inside the reboot window, otherwise reboots would always be skipped

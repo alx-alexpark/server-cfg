@@ -14,7 +14,7 @@ in
   # Users and passwords come only from this config; SSH keys are the only way in
   users.mutableUsers = false;
 
-    # Console-only fallback (sshd rejects passwords); plaintext is in 1Password as "imposter4 root"
+    # Console-only fallback (sshd rejects passwords); plaintext is in 1Password as "imposter4 root" (shared by all hosts)
   users.users.root = {
     hashedPassword = "$y$j9T$BQdQEsSYUpMNe7ehcKFpH/$R0siFnMefmqKZ2JWAi13690LuB/yUKyMtCl1L3Xhi/4";
     openssh.authorizedKeys.keys = sshKeys;
