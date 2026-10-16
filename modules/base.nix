@@ -1,4 +1,5 @@
 {
+  config,
   lib,
   pkgs,
   ...
@@ -52,5 +53,11 @@ in
   environment.systemPackages = map lib.lowPrio [
     pkgs.curl
     pkgs.gitMinimal
+  ] ++ [
+    # `rebuild`: switch to the latest config on GitHub now, instead of waiting for autoUpgrade
+    (pkgs.writeShellScriptBin "rebuild" ''
+      exec sudo nixos-rebuild switch --refresh \
+        --flake github:alx-alexpark/server-cfg#${config.networking.hostName} "$@"
+    '')
   ];
 }
