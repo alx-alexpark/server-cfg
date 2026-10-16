@@ -53,7 +53,12 @@ in
 
   systemd.timers.receipt-briefing = {
     wantedBy = [ "timers.target" ];
-    # no Persistent: if the server was down at 7, skip the day rather than print a stale briefing
-    timerConfig.OnCalendar = "07:00";
+    # Server time (America/New_York). No Persistent: if the server was down at
+    # print time, skip the day rather than print a stale briefing.
+    timerConfig.OnCalendar = [
+      "Mon,Wed,Fri 09:00"
+      "Tue,Thu 10:30"
+      "Sat,Sun 11:30"
+    ];
   };
 }
