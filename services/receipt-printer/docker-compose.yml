@@ -1,0 +1,15 @@
+# Run on a timer by default.nix rather than kept up: `compose run --rm briefing`.
+# RECEIPT_SRC, RECEIPT_UID, RECEIPT_GID and LP_GID are set by the systemd unit.
+services:
+  briefing:
+    build: ${RECEIPT_SRC}
+    image: receipt-printer
+    user: "${RECEIPT_UID}:${RECEIPT_GID}"
+    # the printer's device node belongs to lp (udev rule in default.nix)
+    group_add:
+      - "${LP_GID}"
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      # config.toml, token.json and the Things cache
+      - /var/lib/receipt-printer:/state

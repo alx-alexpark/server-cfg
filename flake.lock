@@ -51,11 +51,28 @@
         "type": "github"
       }
     },
+    "receipt-printer": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792111492,
+        "narHash": "sha256-YBVLbS5rE3EQUjfaZwimcQ1nv2fHG3WUR85WjxBh/aI=",
+        "owner": "alx-alexpark",
+        "repo": "receipt-printer",
+        "rev": "b6bca5d6d628d340e448b81ab06cb8d7e3d03eb8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "alx-alexpark",
+        "repo": "receipt-printer",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "disko": "disko",
         "nixos-facter-modules": "nixos-facter-modules",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "receipt-printer": "receipt-printer"
       }
     }
   },

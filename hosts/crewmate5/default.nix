@@ -10,6 +10,7 @@
     ../../modules/base.nix
     ../../modules/auto-upgrade.nix
     ../../modules/tailscale.nix
+    ../../services/receipt-printer
   ];
 
   boot.loader.grub = {

@@ -1,0 +1,59 @@
+{
+  config,
+  pkgs,
+  receipt-printer,
+  ...
+}:
+let
+  docker = "${config.virtualisation.docker.package}/bin/docker";
+  compose = "${docker} compose -p receipt-printer -f ${./docker-compose.yml}";
+  stateDir = "/var/lib/receipt-printer";
+in
+{
+  virtualisation.docker = {
+    enable = true;
+    autoPrune.enable = true;
+  };
+
+  # The container runs as this user, not root; it owns only the state dir
+  users.users.receipt = {
+    isSystemUser = true;
+    uid = 1500;
+    group = "receipt";
+  };
+  users.groups.receipt.gid = 1500;
+
+  systemd.tmpfiles.rules = [ "d ${stateDir} 0700 receipt receipt -" ];
+
+  # Epson TM-T88V: let the lp group talk to it over USB
+  services.udev.extraRules = ''
+    SUBSYSTEM=="usb", ATTRS{idVendor}=="04b8", ATTRS{idProduct}=="0202", GROUP="lp", MODE="0660"
+  '';
+
+  # Put config.toml (and token.json, for Google Calendar) in place before this runs, as root:
+  #   install -m 600 -o receipt -g receipt config.toml token.json /var/lib/receipt-printer/
+  systemd.services.receipt-briefing = {
+    description = "Print the daily briefing (docker compose)";
+    after = [ "docker.service" "network-online.target" ];
+    requires = [ "docker.service" ];
+    wants = [ "network-online.target" ];
+    environment = {
+      # receipt-printer is a flake input, bumped daily with the rest of flake.lock
+      RECEIPT_SRC = "${receipt-printer}";
+      RECEIPT_UID = toString config.users.users.receipt.uid;
+      RECEIPT_GID = toString config.users.groups.receipt.gid;
+      LP_GID = toString config.users.groups.lp.gid;
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      # --build is a no-op when the source hasn't changed
+      ExecStart = "${compose} run --rm --build briefing";
+    };
+  };
+
+  systemd.timers.receipt-briefing = {
+    wantedBy = [ "timers.target" ];
+    # no Persistent: if the server was down at 7, skip the day rather than print a stale briefing
+    timerConfig.OnCalendar = "07:00";
+  };
+}

@@ -3,12 +3,17 @@
   inputs.disko.url = "github:nix-community/disko";
   inputs.disko.inputs.nixpkgs.follows = "nixpkgs";
   inputs.nixos-facter-modules.url = "github:numtide/nixos-facter-modules";
+  inputs.receipt-printer = {
+    url = "github:alx-alexpark/receipt-printer";
+    flake = false;
+  };
 
   outputs =
     {
       nixpkgs,
       disko,
       nixos-facter-modules,
+      receipt-printer,
       ...
     }:
     {
@@ -24,6 +29,7 @@
 
       nixosConfigurations.crewmate5 = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
+        specialArgs = { inherit receipt-printer; };
         modules = [
           disko.nixosModules.disko
           ./hosts/crewmate5
