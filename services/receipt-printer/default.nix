@@ -61,4 +61,27 @@ in
       "Sat,Sun 11:30"
     ];
   };
+
+  # Open the CD tray when the printer drops off USB, so it's obvious it isn't working
+  systemd.services.receipt-printercheck = {
+    description = "Eject CD tray if the receipt printer is missing";
+    serviceConfig = {
+      Type = "oneshot";
+      DynamicUser = true;
+      SupplementaryGroups = [ "cdrom" ];
+      ExecStart = pkgs.writeShellScript "printercheck" ''
+        ${pkgs.gnugrep}/bin/grep -qx 04b8 /sys/bus/usb/devices/*/idVendor 2>/dev/null && exit 0
+        echo "printer not found on USB, ejecting CD tray" >&2
+        exec ${pkgs.util-linux}/bin/eject
+      '';
+    };
+  };
+
+  systemd.timers.receipt-printercheck = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "1min";
+      OnUnitActiveSec = "5min";
+    };
+  };
 }
