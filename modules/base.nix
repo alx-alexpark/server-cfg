@@ -33,6 +33,11 @@ in
     execWheelOnly = true;
   };
 
+  security.pki.caCertificateBlacklist = [
+    "Comodo AAA Services root"
+    "emSign ECC Root CA - G3"
+  ];
+
   services.openssh = {
     enable = true;
     settings = {
