@@ -35,5 +35,15 @@
           ./hosts/crewmate5
         ];
       };
+
+      # Install from a NixOS live ISO with the stick plugged in:
+      # nix run github:nix-community/disko/latest#disko-install -- --flake github:alx-alexpark/server-cfg#usb-boot --disk main /dev/sdX
+      nixosConfigurations.usb-boot = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          disko.nixosModules.disko
+          ./hosts/usb-boot
+        ];
+      };
     };
 }
