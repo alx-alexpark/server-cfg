@@ -36,12 +36,16 @@
   hardware.cpu.intel.updateMicrocode = true;
   hardware.cpu.amd.updateMicrocode = true;
 
-  boot.loader.grub = {
-    # UEFI only: GRUB writes just to the stick's own ESP, never to a whole disk
-    device = "nodev";
-    efiSupport = true;
-    efiInstallAsRemovable = true;
+  # UEFI only, and systemd-boot rather than GRUB: it writes just to the stick's own ESP,
+  # including the removable-media path (EFI/BOOT/BOOTX64.EFI) any PC boots from.
+  # disko-install forces GRUB onto the whole --disk, which fails without a BIOS boot partition.
+  boot.loader.systemd-boot = {
+    enable = true;
+    # keep the 1G ESP from filling up with old kernels
+    configurationLimit = 10;
   };
+  # don't write boot entries into the firmware of whatever PC the stick is in
+  boot.loader.efi.canTouchEfiVariables = false;
 
   # Keep writes to the stick down
   boot.tmp.useTmpfs = true;

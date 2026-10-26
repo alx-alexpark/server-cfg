@@ -1,5 +1,5 @@
 # UEFI-only gpt with LUKS-encrypted btrfs, for a USB stick
-# No BIOS boot partition: on another PC, /dev/sda is that PC's own drive, so GRUB must never install to a whole disk
+# No BIOS boot partition: on another PC, /dev/sda is that PC's own drive, so the bootloader must never install to a whole disk
 # disko-install asks for the LUKS passphrase; pass --disk main /dev/sdX to pick the stick
 { lib, ... }:
 let
