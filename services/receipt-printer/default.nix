@@ -30,6 +30,19 @@ in
     SUBSYSTEM=="usb", ATTRS{idVendor}=="04b8", ATTRS{idProduct}=="0202", GROUP="lp", MODE="0660"
   '';
 
+  # `receipt "text"` or `... | receipt` on the server, with the same flags as ./receipt
+  environment.systemPackages = [
+    (pkgs.writeShellScriptBin "receipt" ''
+      set -e
+      [ "$(id -u)" = 0 ] || exec /run/wrappers/bin/sudo "$0" "$@"
+      # the same image the briefing uses; a no-op when it's up to date
+      ${docker} build -q -t receipt-printer ${receipt-printer} >/dev/null
+      # only attach stdin when something is piped in, so `receipt` alone doesn't hang
+      [ -t 0 ] && stdin= || stdin=-i
+      exec ${docker} run --rm $stdin --device /dev/bus/usb --entrypoint python receipt-printer receipt.py "$@"
+    '')
+  ];
+
   # Put config.toml (and token.json, for Google Calendar) in place before this runs, as root:
   #   install -m 600 -o receipt -g receipt config.toml token.json /var/lib/receipt-printer/
   systemd.services.receipt-briefing = {
