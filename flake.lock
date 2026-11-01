@@ -54,11 +54,11 @@
     "receipt-printer": {
       "flake": false,
       "locked": {
-        "lastModified": 1792604691,
-        "narHash": "sha256-NGKkRn2DfD0g+ChdDUY3krl4HC+ubRQw09/ua82AIkc=",
+        "lastModified": 1793497250,
+        "narHash": "sha256-KnU+c9ghudlkTWL97mltwqb5N71e5HUebrJrW7sWoTs=",
         "owner": "alx-alexpark",
         "repo": "receipt-printer",
-        "rev": "671de691f668260a2affb788d876864289f48c06",
+        "rev": "0e4235731bf0a3afff708122536e7e910fb8c3e9",
         "type": "github"
       },
       "original": {
