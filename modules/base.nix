@@ -35,8 +35,10 @@ in
 
   security.pki.caCertificateBlacklist = [
     "Comodo AAA Services root"
-    "emSign ECC Root CA - G3"
-  ];
+  ]
+  # emSign ECC Root CA - G3 was removed upstream by nss-cacert 3.131.1, and
+  # blocklisting a cert that isn't in the store fails the cacert build.
+  ++ lib.optional (lib.versionOlder pkgs.cacert.version "3.131.1") "emSign ECC Root CA - G3";
 
   services.openssh = {
     enable = true;
