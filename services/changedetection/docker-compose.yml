@@ -1,0 +1,19 @@
+# Based on https://github.com/dgtlmoon/changedetection.io/blob/master/docker-compose.yml
+# CHANGEDETECTION_DOMAIN is set by the systemd unit in default.nix.
+services:
+  changedetection:
+    image: ghcr.io/dgtlmoon/changedetection.io:latest
+    container_name: changedetection
+    hostname: changedetection
+    environment:
+      # used for links in notifications
+      - BASE_URL=https://${CHANGEDETECTION_DOMAIN}
+      # don't leak the instance URL to watched sites
+      - HIDE_REFERER=true
+      - TZ=America/New_York
+    restart: always
+    volumes:
+      - /var/lib/changedetection:/datastore
+    ports:
+      # only ever reachable through Caddy or an SSH tunnel
+      - "127.0.0.1:5000:5000"
