@@ -187,6 +187,79 @@ class TextExtractor(html.parser.HTMLParser):
         return "\n".join(l for l in lines if l and not any(p.search(l) for p in NOISE))
 
 
+class MarkupSerializer(html.parser.HTMLParser):
+    """Full rendered markup, one node per line: every tag with all its attributes
+    (sorted), every text node and comment, indented by nesting. Catches changes
+    that leave the text alone: a letter wrapped in <b>, a recolored word, a new
+    class or inline style, a changed internal link."""
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+            "param", "source", "track", "wbr"}
+    RAW = {"script", "style"}  # record the tag, not its code (bundles are covered by source:)
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.lines: list[str] = []
+        self.depth = 0
+        self.skip_depth = 0  # >0 while inside a volatile subtree (live countdown)
+        self.raw = 0
+
+    def _line(self, s: str) -> None:
+        if not self.skip_depth:
+            self.lines.append("  " * min(self.depth, 40) + s)
+
+    def handle_starttag(self, tag, attrs):
+        a = sorted((k, " ".join((v or "").split())) for k, v in attrs)
+        if self.skip_depth:
+            if tag not in self.VOID:
+                self.skip_depth += 1
+            return
+        if ("role", "timer") in a:  # live countdown: re-renders every second
+            self._line(f"<{tag} role=timer> [live countdown omitted]")
+            if tag not in self.VOID:
+                self.skip_depth = 1
+            return
+        if tag == "canvas":  # WebGL (three.js) sets size/attrs whenever it finishes booting
+            self._line("<canvas> [WebGL canvas omitted]")
+            self.skip_depth = 1
+            return
+        # touch-action flips while the 3D viewer initializes; it's interaction state, not content
+        a = [(k, re.sub(r"\s*touch-action:[^;]*;?", "", v).strip()) if k == "style" else (k, v) for k, v in a]
+        attr_s = "".join(f' {k}="{normalize_hashes(v)}"' if v else f" {k}" for k, v in a)
+        self._line(f"<{tag}{attr_s}>")
+        if tag not in self.VOID:
+            self.depth += 1
+            if tag in self.RAW:
+                self.raw += 1
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in self.VOID and not self.skip_depth:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        if tag in self.VOID:
+            return
+        if self.skip_depth:
+            self.skip_depth -= 1
+            return
+        self.depth = max(0, self.depth - 1)
+        if tag in self.RAW:
+            self.raw = max(0, self.raw - 1)
+
+    def handle_data(self, data):
+        text = " ".join(data.split())
+        if text and not self.raw:
+            self._line(json.dumps(text, ensure_ascii=False))
+
+    def handle_comment(self, data):
+        if data.strip():
+            self._line(f"<!-- {' '.join(data.split())} -->")
+
+    def markup(self) -> str:
+        return "\n".join(self.lines)
+
+
 # Lines that change on every render and carry no information (live countdowns).
 # Deliberately narrow: anything else goes to the LLM, since hidden messages exist.
 NOISE = [
@@ -211,7 +284,8 @@ NOT_FOUND_PROBE = "/this-page-should-not-exist-404"
 
 
 def crawl(chrome: str, seeds: list[str]) -> dict[str, str]:
-    """Return {"page:<path>": text} for every page reachable from / plus seeds."""
+    """Return {"page:<path>": text, "markup:<path>": markup} for every page
+    reachable from / plus seeds."""
     pages: dict[str, str] = {}
     queue = ["/", *seeds, NOT_FOUND_PROBE]
     queue = list(dict.fromkeys(queue))
@@ -228,8 +302,12 @@ def crawl(chrome: str, seeds: list[str]) -> dict[str, str]:
                 break
         ex = TextExtractor()
         ex.feed(dom)
-        key = "page:(404 page)" if path == NOT_FOUND_PROBE else f"page:{path}"
+        name = "(404 page)" if path == NOT_FOUND_PROBE else path
+        key = f"page:{name}"
         pages[key] = ex.text()
+        ms = MarkupSerializer()
+        ms.feed(dom)
+        pages[f"markup:{name}"] = ms.markup() if len(ex.text()) >= MIN_PAGE_CHARS else ""
         for href in sorted(ex.links):
             p = internal_path(href)
             if p and p not in seen:
@@ -418,7 +496,8 @@ def merge_with_previous(new: dict[str, str], old: dict[str, str]) -> dict[str, s
 
 def make_diff(old: dict[str, str], new: dict[str, str]) -> str:
     chunks = []
-    for path in sorted(set(old) | set(new)):
+    order = {"page": 0, "source": 1, "markup": 2}  # readable text first, raw markup last
+    for path in sorted(set(old) | set(new), key=lambda k: (order.get(k.split(":", 1)[0], 3), k)):
         a, b = old.get(path), new.get(path)
         if a == b:
             continue
@@ -442,7 +521,9 @@ SYSTEM_PROMPT = """You monitor https://www.theveritassearch.com/ for one subscri
 
 About the site: The Veritas Search is a campus-wide treasure hunt at Yale. Capsules are hidden around campus during a search window; each capsule's finder wins a unique reward (meetings with notable people, trips, dinners, etc.). Pages: home, /hints (hints dropped during the search, usually around 5pm or 10pm ET, each labelled with a Greek-letter capsule symbol), /tracker (which capsules are found, by whom and in what order, plus when capsules were last reshuffled/rehidden), /rewards (the prizes), /guidelines (rules, dates), /archive (past years), /about, /support.
 
-The diff has two kinds of sections. "page:<path>" is the rendered page text, which also includes normally-invisible content in brackets (HTML comments, meta tags, alt/title/aria/data-* attributes, image URLs, text in CSS-hidden elements). "source:<file>" holds every string literal and comment from the site's raw HTML, JavaScript and CSS bundles, one per line, with build hashes already normalized away.
+The diff has three kinds of sections. "page:<path>" is the rendered page text, which also includes normally-invisible content in brackets (HTML comments, meta tags, alt/title/aria/data-* attributes, image URLs, text in CSS-hidden elements). "source:<file>" holds every string literal and comment from the site's raw HTML, JavaScript and CSS bundles, one per line, with build hashes already normalized away. "markup:<path>" is the full rendered markup of a page, one node per line (tags with all attributes sorted, quoted text nodes, comments, indented by nesting); it exists to catch changes that leave the text alone.
+
+Reading markup: diffs: a text change there is already covered by the matching page: section, so focus on what only markup shows. Formatting applied to specific letters or words (new <b>, <i>, <em>, <strong>, <span> wrappers, a class or inline style that changes color, size, weight or visibility of a few characters), changed internal link targets (href), element ids, new or reordered elements, changed image/srcset. If certain characters are singled out, list them in page order and say whether they spell something. MUI/Emotion class names like "css-1x2y3z" are hashes of an element's styles: one changing on a handful of elements means those elements were restyled (report it); hundreds changing at once across every page is a framework restyle or upgrade (mention it in "ignored" unless a pattern stands out).
 
 HIDDEN MESSAGES EXIST on this site. The organizers can hide clues anywhere: a "typo", one changed letter, odd capitalization, a changed word, alt text, an HTML comment, a meta tag, a console.log string, a new string in the JS that isn't shown on any page yet, an unlinked route, a renamed or new image. So DO NOT dismiss small text edits as typo fixes or polish. Any change to human-readable content counts as significant, however small. When reporting a small edit, quote the exact before and after, and point out anything that could be a pattern (which letters changed, whether they spell something, etc.).
 
@@ -646,9 +727,18 @@ def full_run(dry_run: bool = False) -> None:
         return
 
     new = merge_with_previous(new, old)
+    # A section type the old snapshot never had (e.g. markup: after an upgrade)
+    # is baselined silently instead of being reported as dozens of "new" items.
+    old_kinds = {k.split(":", 1)[0] for k in old}
+    added = {k.split(":", 1)[0] for k in new} - old_kinds
+    if added:
+        log(f"New snapshot section type(s) {sorted(added)}: baselining without alerting.")
+        old = {**old, **{k: v for k, v in new.items() if k.split(":", 1)[0] in added}}
     diff = make_diff(old, new)
     if not diff:
         log("No changes.")
+        if added:
+            save()  # persist the newly baselined section type
         return
 
     log(f"Changes detected ({len(diff)} chars of diff).")
