@@ -3,19 +3,15 @@
   pkgs,
   ...
 }:
-let
-  # Checks https://www.theveritassearch.com/ and pushes an ntfy alert when the
-  # LLM (Hack Club AI) judges a change significant. watch.py is stdlib-only.
-  # Times are server-local (America/New_York); hints usually drop ~5pm/10pm.
-  checkTimes = [
-    "*-*-* 09:00"
-    "*-*-* 17:30"
-    "*-*-* 22:30"
-  ];
-in
+# Checks https://www.theveritassearch.com/ and pushes an ntfy alert when the
+# LLM (Hack Club AI) judges a change significant. watch.py is stdlib-only.
+# A full check (render every page + diff, LLM only if something changed) runs
+# every 2 minutes. For a lighter mode, raise FULL_EVERY_MIN: runs in between
+# then only fetch index.html and do a full check if it changed (= new deploy).
 {
   # The repo is public, so secrets (and the ntfy topic, which anyone could
   # subscribe to) live on the server. Create before the first run, as root:
+  #   install -d -m 700 /var/lib/secrets
   #   install -m 600 /dev/null /var/lib/secrets/veritas-watch.env
   #   then add HACKCLUB_AI_KEY=... and NTFY_TOPIC=...
   systemd.services.veritas-watch = {
@@ -25,6 +21,7 @@ in
     environment = {
       CHROME = lib.getExe pkgs.chromium;
       DATA_DIR = "/var/lib/veritas-watch";
+      FULL_EVERY_MIN = "0"; # every run is a full check
     };
     serviceConfig = {
       Type = "oneshot";
@@ -59,8 +56,11 @@ in
   systemd.timers.veritas-watch = {
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = checkTimes;
-      Persistent = true;
+      OnCalendar = "*:0/2"; # every 2 minutes
+      # default accuracy is 1min, which would let runs drift
+      AccuracySec = "1s";
+      # if a check ever runs long, systemd won't start a second copy of a
+      # running oneshot, so runs queue instead of overlapping
     };
   };
 }

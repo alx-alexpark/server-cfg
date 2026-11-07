@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import difflib
+import hashlib
 import html.parser
 import json
 import os
@@ -56,6 +57,10 @@ AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://ai.hackclub.com/proxy/v1").
 MODEL = os.environ.get("AI_MODEL", "anthropic/claude-opus-5.5")
 RUN_AT = [t.strip() for t in os.environ.get("RUN_AT", "09:00").split(",") if t.strip()]
 MAX_PAGES = int(os.environ.get("MAX_PAGES", "60"))
+# Between full crawls, each run only fetches index.html (~2.5 KB) and does a full
+# crawl if it changed. The site is static, so every content change is a redeploy,
+# which changes the bundle names in index.html. Full crawl at least this often anyway:
+FULL_EVERY_MIN = int(os.environ.get("FULL_EVERY_MIN", "60"))
 MAX_DIFF_CHARS = 150_000
 MIN_PAGE_CHARS = 40  # a render shorter than this is treated as a failed render
 
@@ -615,8 +620,7 @@ def channels_configured() -> bool:
                ("NTFY_TOPIC", "SLACK_WEBHOOK_URL", "DISCORD_WEBHOOK_URL", "TELEGRAM_BOT_TOKEN", "IMESSAGE_TO"))
 
 
-def run_once(dry_run: bool = False) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+def full_run(dry_run: bool = False) -> None:
     snap_file = DATA_DIR / "snapshot.json"
     old = json.loads(snap_file.read_text()) if snap_file.exists() else None
 
@@ -680,6 +684,44 @@ def run_once(dry_run: bool = False) -> None:
         log("Not saving snapshot so the change is retried next run.")
 
 
+def run_once(dry_run: bool = False, force_full: bool = False) -> None:
+    """Cheap check first: a full crawl only if index.html changed (= new deploy)
+    or the last full crawl is older than FULL_EVERY_MIN."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    state_file = DATA_DIR / "quickcheck.json"
+    try:
+        state = json.loads(state_file.read_text())
+    except (OSError, ValueError):
+        state = {}
+
+    status, index = fetch(SITE + "/")
+    fp = hashlib.sha256(index.encode()).hexdigest() if status == 200 and index else None
+    age_min = (time.time() - state.get("last_full", 0)) / 60
+    due = age_min >= FULL_EVERY_MIN
+
+    if not (force_full or dry_run or due):
+        if fp is None:
+            log(f"Couldn't fetch index.html (HTTP {status}); will retry next run.")
+            return
+        if fp == state.get("fingerprint"):
+            log(f"Unchanged (index.html same; full check in {FULL_EVERY_MIN - age_min:.0f} min).")
+            return
+        log("index.html changed (new deploy?), running full check now.")
+    elif due and not dry_run and FULL_EVERY_MIN > 0:
+        log("First full check." if "last_full" not in state else f"Periodic full check (last one {age_min:.0f} min ago).")
+
+    try:
+        full_run(dry_run)
+    finally:
+        # Recorded even if the run failed, so a persistent failure (e.g. ntfy down)
+        # is retried at the next periodic full check, not every minute. The diff is
+        # against the last *saved* snapshot, so the change itself isn't lost.
+        if not dry_run and fp:
+            tmp = state_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"fingerprint": fp, "last_full": time.time()}))
+            tmp.replace(state_file)
+
+
 def seconds_until_next_run() -> float:
     now = dt.datetime.now()
     times = []
@@ -699,13 +741,14 @@ def main() -> None:
     ap.add_argument("--loop", action="store_true", help="run forever at RUN_AT times")
     ap.add_argument("--dry-run", action="store_true", help="print diff and analysis; don't notify or save")
     ap.add_argument("--test-notify", action="store_true", help="send a test message and exit")
+    ap.add_argument("--full", action="store_true", help="skip the cheap index.html check and always crawl")
     args = ap.parse_args()
 
     if args.test_notify:
         sys.exit(0 if notify("Veritas watcher test", "If you can read this, notifications work.") else 1)
 
     if not args.loop:
-        run_once(args.dry_run)
+        run_once(args.dry_run, args.full)
         return
 
     run_once()  # run immediately on start, then on schedule
