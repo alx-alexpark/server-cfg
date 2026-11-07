@@ -15,7 +15,6 @@
     ../../services/forgejo
     ../../services/github-mirror
     ../../services/searxng
-    ../../services/veritas-watch
   ];
 
   boot.loader.grub = {

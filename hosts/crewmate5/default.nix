@@ -11,6 +11,7 @@
     ../../modules/auto-upgrade.nix
     ../../modules/tailscale.nix
     ../../services/receipt-printer
+    ../../services/veritas-watch
   ];
 
   boot.loader.grub = {
