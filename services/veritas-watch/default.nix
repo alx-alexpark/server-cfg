@@ -18,6 +18,8 @@
     description = "Watch theveritassearch.com for changes";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
+    # GNU diff for the full JS bundle diffs (difflib is too slow on them)
+    path = [ pkgs.diffutils ];
     environment = {
       CHROME = lib.getExe pkgs.chromium;
       DATA_DIR = "/var/lib/veritas-watch";

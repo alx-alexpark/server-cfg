@@ -423,6 +423,91 @@ def _unescape(s: str) -> str:
     return _ESC.sub(rep, s) if "\\" in s else s
 
 
+_REGEX_PREV = "(,=:[!&|?{};+-*%<>~^"
+
+
+def _skip_literal(src: str, i: int) -> int:
+    """Index just past the string, template, comment or regex literal at src[i]."""
+    n, c = len(src), src[i]
+    if src.startswith("/*", i):
+        j = src.find("*/", i + 2)
+        return n if j < 0 else j + 2
+    if src.startswith("//", i):
+        j = src.find("\n", i)
+        return n if j < 0 else j
+    if c in "\"'":
+        j = i + 1
+        while j < n and src[j] != c and src[j] != "\n":
+            j += 2 if src[j] == "\\" else 1
+        return min(j + 1, n)
+    if c == "`":
+        j, depth = i + 1, 0
+        while j < n:
+            if src[j] == "\\":
+                j += 2; continue
+            if depth == 0 and src[j] == "`":
+                return j + 1
+            if src.startswith("${", j):
+                depth += 1; j += 2; continue
+            if depth and src[j] == "}":
+                depth -= 1
+            j += 1
+        return n
+    j, in_class = i + 1, False  # regex literal
+    while j < n and src[j] != "\n":
+        if src[j] == "\\":
+            j += 2; continue
+        if src[j] == "[":
+            in_class = True
+        elif src[j] == "]":
+            in_class = False
+        elif src[j] == "/" and not in_class:
+            break
+        j += 1
+    return min(j + 1, n)
+
+
+def format_js(src: str) -> str:
+    """The whole (minified) bundle, split into short lines at ; { } (and at commas
+    once a line gets long), so a diff points at the exact spot that changed, e.g.
+    letters newly wrapped in their own jsx("span",{children:"S"}). Literals are
+    copied verbatim; build hashes are normalized."""
+    out: list[str] = []
+    line: list[str] = []
+    size, prev, i, n = 0, "", 0, len(src)
+
+    def brk():
+        nonlocal size
+        s = "".join(line).strip()
+        if s:
+            out.append(s)
+        line.clear()
+        size = 0
+
+    while i < n:
+        c = src[i]
+        if c in "\"'`" or src.startswith(("/*", "//"), i) or (c == "/" and (prev == "" or prev in _REGEX_PREV)):
+            j = _skip_literal(src, i)
+            line.append(src[i:j])
+            size += j - i
+            if not src.startswith(("/*", "//"), i):
+                prev = "a"
+            i = j
+            continue
+        i += 1
+        if c == "\n":
+            brk()
+            continue
+        line.append(c)
+        size += 1
+        if not c.isspace():
+            prev = c
+        if c in ";{}" or (c == "," and size > 120):
+            brk()
+    brk()
+    return normalize_hashes("\n".join(out))
+
+
 def css_strings(src: str) -> list[str]:
     found = re.findall(r"/\*.*?\*/", src, re.S)
     found += [m for m in re.findall(r"content\s*:\s*(\"[^\"]*\"|'[^']*')", src)]
@@ -451,6 +536,7 @@ def source_snapshot() -> tuple[dict[str, str], list[str]]:
             snap[f"source:{name}"] = "\n".join(css_strings(body))
             continue
         snap[f"source:{name}"] = "\n".join(js_strings(body))
+        snap[f"js:{name}"] = format_js(body)
         routes += re.findall(r'path:"(/[^"]*)"', body)
         for ref in re.findall(r"""["'`]\./([A-Za-z0-9_.-]+\.(?:js|css))["'`]""", body) + \
                    re.findall(r"""["'`]/?assets/([A-Za-z0-9_.-]+\.(?:js|css))["'`]""", body):
@@ -494,10 +580,27 @@ def merge_with_previous(new: dict[str, str], old: dict[str, str]) -> dict[str, s
     return merged
 
 
+def unified_diff(a: str, b: str, path: str) -> str:
+    """GNU diff when available (difflib is far too slow on a few hundred thousand
+    lines of bundle), difflib otherwise."""
+    if exe := shutil.which("diff"):
+        with tempfile.TemporaryDirectory(prefix="veritas-diff-") as d:
+            pa, pb = Path(d, "a"), Path(d, "b")
+            pa.write_text(a + "\n")
+            pb.write_text(b + "\n")
+            r = subprocess.run([exe, "-U2", "--label", f"{path} (before)", "--label", f"{path} (after)", pa, pb],
+                               capture_output=True, timeout=300)
+            if r.returncode in (0, 1):
+                return r.stdout.decode("utf-8", "replace").rstrip("\n")
+    return "\n".join(difflib.unified_diff(
+        a.splitlines(), b.splitlines(), f"{path} (before)", f"{path} (after)", n=2, lineterm=""))
+
+
 def make_diff(old: dict[str, str], new: dict[str, str]) -> str:
     chunks = []
-    order = {"page": 0, "source": 1, "markup": 2}  # readable text first, raw markup last
-    for path in sorted(set(old) | set(new), key=lambda k: (order.get(k.split(":", 1)[0], 3), k)):
+    # readable text first, then string lists, rendered markup, and the full bundles last
+    order = {"page": 0, "source": 1, "markup": 2, "js": 3}
+    for path in sorted(set(old) | set(new), key=lambda k: (order.get(k.split(":", 1)[0], 4), k)):
         a, b = old.get(path), new.get(path)
         if a == b:
             continue
@@ -506,10 +609,7 @@ def make_diff(old: dict[str, str], new: dict[str, str]) -> str:
         elif b is None:
             chunks.append(f"=== NO LONGER PRESENT {path} ===")
         else:
-            d = difflib.unified_diff(
-                a.splitlines(), b.splitlines(), f"{path} (before)", f"{path} (after)", n=2, lineterm=""
-            )
-            chunks.append(f"=== CHANGED {path} ===\n" + "\n".join(d))
+            chunks.append(f"=== CHANGED {path} ===\n" + unified_diff(a, b, path))
     return "\n\n".join(chunks)
 
 
@@ -521,7 +621,7 @@ SYSTEM_PROMPT = """You monitor https://www.theveritassearch.com/ for one subscri
 
 About the site: The Veritas Search is a campus-wide treasure hunt at Yale. Capsules are hidden around campus during a search window; each capsule's finder wins a unique reward (meetings with notable people, trips, dinners, etc.). Pages: home, /hints (hints dropped during the search, usually around 5pm or 10pm ET, each labelled with a Greek-letter capsule symbol), /tracker (which capsules are found, by whom and in what order, plus when capsules were last reshuffled/rehidden), /rewards (the prizes), /guidelines (rules, dates), /archive (past years), /about, /support.
 
-The diff has three kinds of sections. "page:<path>" is the rendered page text, which also includes normally-invisible content in brackets (HTML comments, meta tags, alt/title/aria/data-* attributes, image URLs, text in CSS-hidden elements). "source:<file>" holds every string literal and comment from the site's raw HTML, JavaScript and CSS bundles, one per line, with build hashes already normalized away. "markup:<path>" is the full rendered markup of a page, one node per line (tags with all attributes sorted, quoted text nodes, comments, indented by nesting); it exists to catch changes that leave the text alone.
+The diff has four kinds of sections. "page:<path>" is the rendered page text, which also includes normally-invisible content in brackets (HTML comments, meta tags, alt/title/aria/data-* attributes, image URLs, text in CSS-hidden elements). "source:<file>" holds every string literal and comment from the site's raw HTML, JavaScript and CSS bundles, one per line, with build hashes already normalized away. "markup:<path>" is the full rendered markup of a page, one node per line (tags with all attributes sorted, quoted text nodes, comments, indented by nesting); it exists to catch changes that leave the text alone. "js:<file>" is the complete minified JavaScript bundle split into short lines (at ; { } and some commas), so its diff shows code changes in place: JSX like jsx("span",{className:...,children:"S"}) is how React builds elements, so a run of new single-letter children, a string split into pieces, or new style/className/sx props around certain characters means letters are being singled out, exactly the kind of hidden message to look for (in 2025 the home page blurb had letters wrapped in their own tags spelling a building name, highlighted only after waiting on the page). Minified identifier renames (single letters like n, r, Fm changing) are build churn.
 
 Reading markup: diffs: a text change there is already covered by the matching page: section, so focus on what only markup shows. Formatting applied to specific letters or words (new <b>, <i>, <em>, <strong>, <span> wrappers, a class or inline style that changes color, size, weight or visibility of a few characters), changed internal link targets (href), element ids, new or reordered elements, changed image/srcset. If certain characters are singled out, list them in page order and say whether they spell something. MUI/Emotion class names like "css-1x2y3z" are hashes of an element's styles: one changing on a handful of elements means those elements were restyled (report it); hundreds changing at once across every page is a framework restyle or upgrade (mention it in "ignored" unless a pattern stands out).
 
@@ -687,6 +787,32 @@ def notify(title: str, body: str) -> int:
     return sent
 
 
+NTFY_MAX_ATTACHMENT = 14 * 1024 * 1024  # ntfy.sh allows 15 MB per file
+
+
+def notify_file(title: str, message: str, filename: str, data: str) -> bool:
+    """Send data to ntfy as a file attachment (ntfy only; other channels can't
+    take a multi-megabyte diff)."""
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic:
+        return False
+    server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+    raw = data.encode()
+    if len(raw) > NTFY_MAX_ATTACHMENT:
+        raw = raw[:NTFY_MAX_ATTACHMENT] + b"\n[... truncated; full diff is in history/ on the server]\n"
+    hdr = lambda s, n: s.encode("utf-8").decode("latin-1", "ignore")[:n]
+    try:
+        _post(f"{server}/{topic}", raw, {
+            "Title": hdr(title, 200), "Message": hdr(message, 1000).replace("\n", "\\n"),
+            "Filename": filename, "Click": SITE + "/", "Tags": "page_facing_up",
+        })
+        log(f"  sent {filename} ({len(raw)} bytes) via ntfy")
+        return True
+    except Exception as e:
+        log(f"  FAILED to send {filename} via ntfy: {e}")
+        return False
+
+
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
@@ -742,6 +868,19 @@ def full_run(dry_run: bool = False) -> None:
         return
 
     log(f"Changes detected ({len(diff)} chars of diff).")
+    is_js = lambda k: k.startswith("js:")
+    js_diff = make_diff({k: v for k, v in old.items() if is_js(k)}, {k: v for k, v in new.items() if is_js(k)})
+    stamp = f"{dt.datetime.now():%Y%m%d-%H%M}"
+
+    def send_js(verdict: str) -> None:
+        """Every bundle change goes to ntfy as a file, whatever the LLM thought."""
+        if js_diff and not dry_run:
+            files = sorted(set(re.findall(r"^=== (?:CHANGED|NEW|NO LONGER PRESENT) js:(\S+) ===$", js_diff, re.M)))
+            notify_file("JS bundle diff", f"{verdict}\nFiles: {', '.join(files)[:600]}",
+                        f"veritas-js-{stamp}.diff", js_diff)
+
+    if js_diff:
+        log(f"  JS bundle diff: {len(js_diff)} chars")
     if not dry_run:
         hist = DATA_DIR / "history"
         hist.mkdir(exist_ok=True)
@@ -755,9 +894,11 @@ def full_run(dry_run: bool = False) -> None:
             print("\n----- DIFF -----\n" + diff[:3000] + ("\n[...]" if len(diff) > 3000 else "") + "\n----- ANALYSIS -----\n" + json.dumps(result, indent=2, ensure_ascii=False))
             return
         if not result["notify"]:
+            send_js(f"LLM: not significant. {result['ignored']}")
             save()
             return
         title, body = result["headline"], result["message"]
+        verdict = f"LLM: {result['headline']}"
         if result.get("location_analysis", "").strip():
             body += "\n\n📍 Where it might be:\n" + result["location_analysis"].strip()
     except Exception as e:
@@ -767,8 +908,10 @@ def full_run(dry_run: bool = False) -> None:
             return
         title = "Veritas Search changed (unfiltered)"
         body = f"LLM analysis failed: {str(e)[:200]}\n\n{diff[:2500]}"
+        verdict = "LLM analysis failed"
 
     if notify(title, body) > 0 or not channels_configured():
+        send_js(verdict)
         save()
     else:
         log("Not saving snapshot so the change is retried next run.")
