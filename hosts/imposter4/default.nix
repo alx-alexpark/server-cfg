@@ -8,13 +8,11 @@
     (modulesPath + "/profiles/qemu-guest.nix")
     ./disk-config.nix
     ./hardware-configuration.nix
+    # Kept bare until the contract runs out; its services moved to amogus6.
+    # Still a Tailscale exit node, so traffic can leave from a second location.
     ../../modules/base.nix
-    ../../modules/caddy.nix
     ../../modules/auto-upgrade.nix
     ../../modules/tailscale.nix
-    ../../services/forgejo
-    ../../services/github-mirror
-    ../../services/searxng
   ];
 
   boot.loader.grub = {
