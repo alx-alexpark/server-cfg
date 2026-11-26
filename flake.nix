@@ -17,6 +17,11 @@
       ...
     }:
     {
+      # Host names: <Among Us word><number>, e.g. sussy2, mogus3, imposter4, crewmate5.
+      # The number is one counter across every machine, in or out of this repo: a new
+      # host takes the next one and numbers are never reused. Each word is used once.
+      # Machines that aren't servers (usb-boot) are named for what they are instead.
+
       # Use this for all other targets
       # nixos-anywhere --flake .#generic --generate-hardware-config nixos-generate-config ./hardware-configuration.nix <hostname>
       nixosConfigurations.imposter4 = nixpkgs.lib.nixosSystem {
@@ -24,6 +29,14 @@
         modules = [
           disko.nixosModules.disko
           ./hosts/imposter4
+        ];
+      };
+
+      nixosConfigurations.amogus6 = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          disko.nixosModules.disko
+          ./hosts/amogus6
         ];
       };
 

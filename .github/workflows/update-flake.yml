@@ -29,6 +29,7 @@ jobs:
         run: |
           nix build --no-link \
             .#nixosConfigurations.imposter4.config.system.build.toplevel \
+            .#nixosConfigurations.amogus6.config.system.build.toplevel \
             .#nixosConfigurations.crewmate5.config.system.build.toplevel \
             .#nixosConfigurations.usb-boot.config.system.build.toplevel
 
