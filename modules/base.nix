@@ -25,7 +25,11 @@ in
     hashedPassword = "!";
     extraGroups = [ "wheel" ];
     openssh.authorizedKeys.keys = sshKeys;
+    shell = pkgs.fish;
   };
+
+  # Sets up fish system-wide (completions, NixOS env) so it works as a login shell
+  programs.fish.enable = true;
 
   # alex has no password; login is SSH-only with hardware-backed keys
   security.sudo = {
