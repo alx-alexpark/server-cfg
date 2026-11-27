@@ -71,6 +71,30 @@ let
     fi
   '';
 
+  # Seafile's image only gets OS updates when Seafile rebuilds it, which can lag
+  # Ubuntu's security fixes (nginx, libtiff, ...) by days. So run a copy with
+  # every pending update applied, rebuilt before each start of the container
+  # and so at least nightly (see seafile-update below).
+  upstreamImage = "docker.io/seafileltd/seafile-mc:13.0-latest";
+  patchedImage = "localhost/seafile-patched:13.0";
+  containerfile = pkgs.writeText "Containerfile" ''
+    FROM ${upstreamImage}
+    RUN apt-get update \
+     && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold upgrade \
+     && apt-get clean \
+     && rm -rf /var/lib/apt/lists/*
+  '';
+  buildImage = ''
+    # --no-cache so apt runs again even when the upstream image hasn't changed
+    if podman build --pull=newer --no-cache -t ${patchedImage} -f ${containerfile} /var/empty; then
+      podman image prune -f
+    elif podman image exists ${patchedImage}; then
+      echo "build failed, keeping the last patched image" >&2
+    else
+      exit 1
+    fi
+  '';
+
   # Shared by all three containers
   common = {
     podman.user = user;
@@ -128,6 +152,36 @@ in
       podman-seafile = {
         unitConfig.RequiresMountsFor = [ storageBox ];
         preStart = linkStorage;
+        wants = [ "seafile-image.service" ];
+        after = [ "seafile-image.service" ];
+      };
+
+      seafile-image = {
+        description = "Build the Seafile image with current security updates";
+        after = [
+          "network-online.target"
+          "user@${toString uid}.service"
+        ];
+        wants = [ "network-online.target" ];
+        requires = [ "user@${toString uid}.service" ];
+        path = [ config.virtualisation.podman.package ];
+        environment = runtimeEnv;
+        script = buildImage;
+        serviceConfig = {
+          Type = "oneshot";
+          User = user;
+          TimeoutStartSec = "30min";
+        };
+      };
+
+      # Nightly: restarting pulls newer MariaDB and Redis images and rebuilds
+      # the patched Seafile image first
+      seafile-update = {
+        description = "Restart Seafile on freshly patched images";
+        serviceConfig.Type = "oneshot";
+        script = ''
+          systemctl restart podman-seafile-db podman-seafile-redis podman-seafile
+        '';
       };
     }
   ];
@@ -164,7 +218,9 @@ in
     };
 
     seafile = lib.recursiveUpdate common {
-      image = "docker.io/seafileltd/seafile-mc:13.0-latest";
+      image = patchedImage;
+      # built locally by seafile-image
+      pull = "never";
       dependsOn = [
         "seafile-db"
         "seafile-redis"
@@ -201,6 +257,15 @@ in
       ];
       # only ever reachable through Caddy or an SSH tunnel
       ports = [ "127.0.0.1:8000:80" ];
+    };
+  };
+
+  systemd.timers.seafile-update = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "04:30";
+      RandomizedDelaySec = "15min";
+      Persistent = true;
     };
   };
 
