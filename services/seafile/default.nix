@@ -173,7 +173,14 @@ in
         SEAFILE_SERVER_HOSTNAME = domain;
         SEAFILE_SERVER_PROTOCOL = "https";
         SEAFILE_MYSQL_DB_HOST = "seafile-db";
+        SEAFILE_MYSQL_DB_PORT = "3306";
         SEAFILE_MYSQL_DB_USER = "seafile";
+        # setup refuses to run without these, even though they're the defaults
+        SEAFILE_MYSQL_DB_CCNET_DB_NAME = "ccnet_db";
+        SEAFILE_MYSQL_DB_SEAFILE_DB_NAME = "seafile_db";
+        SEAFILE_MYSQL_DB_SEAHUB_DB_NAME = "seahub_db";
+        SITE_ROOT = "/";
+        NON_ROOT = "false";
         TIME_ZONE = config.time.timeZone;
         CACHE_PROVIDER = "redis";
         REDIS_HOST = "seafile-redis";
