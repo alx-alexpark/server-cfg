@@ -107,6 +107,8 @@ in
     maxUploadSize = "1G";
     # Reassembling a big chunked upload reads and writes over the Storage Box
     fastcgiTimeout = 600;
+    # nixpkgs' 8 MB fills up and the admin overview warns about it
+    phpOptions."opcache.interned_strings_buffer" = "32";
 
     settings = {
       trusted_proxies = [
