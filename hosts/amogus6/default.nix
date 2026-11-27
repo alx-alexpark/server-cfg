@@ -20,24 +20,25 @@ in
     ../../services/forgejo
     ../../services/github-mirror
     ../../services/searxng
-    ../../services/seafile
+    ../../services/nextcloud
   ];
 
-  # Hetzner Storage Box sub-account over SFTP with an SSH key, for Seafile's file
-  # blocks. No passwords: the client refuses anything but the key, and only
-  # Hetzner's pinned host key is trusted. The key is root-only, so the seafile
-  # user can use the mounted files but never the Storage Box account itself.
-  # Only the box's `seafile` folder is mounted, so .ssh/authorized_keys stays out
-  # of reach. One-time setup, as root on the server, after the first deploy:
+  # Hetzner Storage Box sub-account over SFTP with an SSH key, as Nextcloud's data
+  # directory (services/nextcloud). No passwords: the client refuses anything but
+  # the key, and only Hetzner's pinned host key is trusted. The key is root-only,
+  # so Nextcloud can use the mounted files but never the Storage Box account
+  # itself, and only the box's `nextcloud` folder is mounted, so the account's
+  # .ssh/authorized_keys stays out of reach. One-time setup for a new box, as
+  # root on the server:
   #   cat /var/lib/secrets/storagebox_ed25519.pub \
   #     | ssh -p23 u731385-sub2@u731385-sub2.your-storagebox.de install-ssh-key
-  #   echo 'mkdir seafile' | sftp -P23 -i /var/lib/secrets/storagebox_ed25519 \
+  #   echo 'mkdir nextcloud' | sftp -P23 -i /var/lib/secrets/storagebox_ed25519 \
   #     u731385-sub2@u731385-sub2.your-storagebox.de
-  #   systemctl restart mnt-storagebox.mount && systemctl start podman-seafile
+  #   systemctl restart var-lib-nextcloud-data.mount && systemctl start nextcloud-setup
   # install-ssh-key asks for the sub-account password once; reset it to a long
   # random one afterwards and don't keep it (Hetzner can't turn passwords off).
-  fileSystems."/mnt/storagebox" = {
-    device = "u731385-sub2@u731385-sub2.your-storagebox.de:seafile";
+  fileSystems.${config.services.nextcloud.datadir + "/data"} = {
+    device = "u731385-sub2@u731385-sub2.your-storagebox.de:nextcloud";
     fsType = "sshfs";
     options = [
       "port=23"
@@ -55,11 +56,11 @@ in
       "reconnect"
       "ServerAliveInterval=15"
       "ServerAliveCountMax=3"
-      # everything on it belongs to the rootless seafile user, and only to it
+      # everything on it belongs to the nextcloud user, and only to it
       "allow_other"
       "default_permissions"
-      "uid=${toString config.users.users.seafile.uid}"
-      "gid=${toString config.users.groups.seafile.gid}"
+      "uid=${toString config.users.users.nextcloud.uid}"
+      "gid=${toString config.users.groups.nextcloud.gid}"
       "umask=077"
       "noexec"
       "nosuid"
@@ -91,7 +92,7 @@ in
     script = ''
       if [ ! -f ${storageBoxKey} ]; then
         install -d -m 700 "$(dirname ${storageBoxKey})"
-        ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "amogus6 seafile" -f ${storageBoxKey}
+        ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "amogus6 storagebox" -f ${storageBoxKey}
       fi
     '';
   };
