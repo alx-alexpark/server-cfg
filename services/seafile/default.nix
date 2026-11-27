@@ -55,6 +55,22 @@ let
     podman network exists ${network} || podman network create ${network}
   '';
 
+  # Runs as the seafile user before every start. Seafile always keeps blocks,
+  # commits and fs objects in seafile-data/storage, so once first-run setup has
+  # made seafile-data, make storage a link to the Storage Box (/storagebox in
+  # the container), moving over anything that was written locally. On a brand
+  # new install that means one restart after the first start.
+  linkStorage = ''
+    data=${home}/shared/seafile/seafile-data
+    if [ -d "$data" ] && [ ! -L "$data/storage" ]; then
+      if [ -d "$data/storage" ]; then
+        cp -R "$data/storage/." ${storage}/
+        rm -rf "$data/storage"
+      fi
+      ln -s /storagebox "$data/storage"
+    fi
+  '';
+
   # Shared by all three containers
   common = {
     podman.user = user;
@@ -108,7 +124,12 @@ in
       requires = [ "seafile-prepare.service" ];
     }))
 
-    { podman-seafile.unitConfig.RequiresMountsFor = [ storageBox ]; }
+    {
+      podman-seafile = {
+        unitConfig.RequiresMountsFor = [ storageBox ];
+        preStart = linkStorage;
+      };
+    }
   ];
 
   virtualisation.oci-containers.backend = "podman";
@@ -166,7 +187,10 @@ in
       volumes = [
         # config, logs, thumbnails, avatars: small, stays on the server's disk
         "${home}/shared:/shared"
-        "${storage}:/shared/seafile/seafile-data/storage"
+        # Not mounted at seafile-data/storage directly: Seafile skips its
+        # first-run setup if seafile-data already exists. linkStorage points
+        # storage here instead.
+        "${storage}:/storagebox"
       ];
       # only ever reachable through Caddy or an SSH tunnel
       ports = [ "127.0.0.1:8000:80" ];
