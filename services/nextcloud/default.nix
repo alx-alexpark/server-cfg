@@ -42,6 +42,8 @@ let
     "federation"
     "files_reminders"
     "firstrunwizard"
+    # can only show a log file, and logs go to the journal
+    "logreader"
     "nextcloud_announcements"
     "office"
     "photos"
