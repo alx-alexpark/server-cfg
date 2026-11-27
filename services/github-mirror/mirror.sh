@@ -5,10 +5,15 @@
 : "${FORGEJO_TOKEN:?set FORGEJO_TOKEN in /var/lib/secrets/github-mirror.env}"
 api=http://127.0.0.1:3000/api/v1
 
-forgejo() { curl -sS -H "Authorization: token $FORGEJO_TOKEN" "$@"; }
+# Tokens reach curl and jq through a file descriptor, stdin or the environment,
+# never as arguments: any local user can read a process's arguments in /proc.
+# printf is a shell builtin, so it doesn't start a process of its own.
+forgejo() {
+  curl -sS -H @<(printf 'Authorization: token %s\n' "$FORGEJO_TOKEN") "$@"
+}
 github() {
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" "$@"
+    curl -sSf -H @<(printf 'Authorization: Bearer %s\n' "$GITHUB_TOKEN") "$@"
   else
     curl -sSf "$@"
   fi
@@ -37,14 +42,16 @@ for repo in "$@"; do
 
   body=$(jq -n \
     --arg url "https://github.com/$repo" --arg name "$name" --arg owner "$owner" \
-    --arg token "${GITHUB_TOKEN:-}" --argjson info "$info" \
-    '{clone_addr: $url, repo_name: $name, repo_owner: $owner, service: "github",
-      mirror: true, wiki: true, private: $info.private,
-      description: ($info.description // "")}
+    --argjson info "$info" \
+    '($ENV.GITHUB_TOKEN // "") as $token
+     | {clone_addr: $url, repo_name: $name, repo_owner: $owner, service: "github",
+        mirror: true, wiki: true, private: $info.private,
+        description: ($info.description // "")}
      + (if $token != "" then {auth_token: $token} else {} end)')
 
+  # the body holds the GitHub token, so it goes in on stdin
   code=$(forgejo -o /dev/null -w '%{http_code}' -X POST "$api/repos/migrate" \
-    -H "Content-Type: application/json" -d "$body")
+    -H "Content-Type: application/json" --data-binary @- <<<"$body")
   if [ "$code" = 201 ]; then
     echo "mirrored $repo"
   else

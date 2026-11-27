@@ -69,6 +69,8 @@ let
     ProtectClock = true;
     ProtectControlGroups = true;
     ProtectHostname = true;
+    # can't see other users' processes, or the secrets in their arguments
+    ProtectProc = "invisible";
     ProtectKernelLogs = true;
     ProtectKernelModules = true;
     ProtectKernelTunables = true;
