@@ -88,6 +88,23 @@ let
     chmod 400 ${secretsDir}/simplelogin-oidc.env
   '';
 
+  # Nextcloud's OIDC client secret, the same way: Nextcloud's bootstrap reads
+  # ncOidcSecret (root-only), and the worker gets a copy for blueprints/nextcloud.yaml
+  ncOidcSecret = "/var/lib/secrets/nextcloud-oidc-secret";
+  generateNcOidcSecret = pkgs.writeShellScript "nextcloud-oidc-secret" ''
+    set -eu
+    umask 077
+    install -d -m 700 "$(dirname ${ncOidcSecret})"
+    if [ ! -s ${ncOidcSecret} ]; then
+      ${pkgs.openssl}/bin/openssl rand -hex 48 > ${ncOidcSecret}
+    fi
+    install -d -m 700 -o ${user} -g ${user} ${secretsDir}
+    printf 'NEXTCLOUD_OIDC_CLIENT_SECRET=%s\n' "$(cat ${ncOidcSecret})" \
+      > ${secretsDir}/nextcloud-oidc.env
+    chown ${user}:${user} ${secretsDir}/nextcloud-oidc.env
+    chmod 400 ${secretsDir}/nextcloud-oidc.env
+  '';
+
   common = {
     podman.user = user;
     # picks up Postgres patch releases on restart; Authentik itself is pinned
@@ -242,6 +259,16 @@ in
       };
     };
 
+    nextcloud-oidc-secret = {
+      description = "Generate Nextcloud's OIDC client secret for Authentik";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = generateNcOidcSecret;
+      };
+    };
+
     authentik-pod = {
       description = "Podman pod for Authentik";
       wantedBy = [ "multi-user.target" ];
@@ -249,12 +276,16 @@ in
         "network-online.target"
         "linger-users.service"
       ];
-      requires = [ "simplelogin-oidc-secret.service" ];
+      requires = [
+        "simplelogin-oidc-secret.service"
+        "nextcloud-oidc-secret.service"
+      ];
       after = [
         "network-online.target"
         "linger-users.service"
         "user@${toString uid}.service"
         "simplelogin-oidc-secret.service"
+        "nextcloud-oidc-secret.service"
       ];
       environment.HOME = home;
       unitConfig.RequiresMountsFor = "/run/user/${toString uid}/containers";
@@ -319,13 +350,18 @@ in
       in
       worker
       // {
-        # SIMPLELOGIN_OIDC_CLIENT_SECRET, for blueprints/simplelogin.yaml
-        environmentFiles = worker.environmentFiles ++ [ "${secretsDir}/simplelogin-oidc.env" ];
+        # SIMPLELOGIN_OIDC_CLIENT_SECRET and NEXTCLOUD_OIDC_CLIENT_SECRET, for
+        # blueprints/simplelogin.yaml and blueprints/nextcloud.yaml
+        environmentFiles = worker.environmentFiles ++ [
+          "${secretsDir}/simplelogin-oidc.env"
+          "${secretsDir}/nextcloud-oidc.env"
+        ];
         # our blueprints, read-only; the worker applies them when they change
         volumes = worker.volumes ++ [
           "${brandingBlueprint}:/blueprints/sussynet/branding.yaml:ro"
           "${./blueprints/enrollment.yaml}:/blueprints/sussynet/enrollment.yaml:ro"
           "${./blueprints/simplelogin.yaml}:/blueprints/sussynet/simplelogin.yaml:ro"
+          "${./blueprints/nextcloud.yaml}:/blueprints/sussynet/nextcloud.yaml:ro"
         ];
       };
   };
