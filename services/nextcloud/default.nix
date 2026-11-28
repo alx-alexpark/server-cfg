@@ -154,10 +154,12 @@ in
       # Don't publish profiles to Nextcloud's lookup server
       lookup_server = "";
       "simpleSignUpLink.shown" = false;
-      # Authentik usernames are picked at sign-up, so one could match a local
-      # account here (like ${admin}). Refuse that login instead of handing
-      # over the local account.
-      user_oidc.soft_auto_provision = false;
+      # An Authentik login whose username matches a local account here signs in
+      # to that account, so Authentik's ${admin} gets the local ${admin} and its
+      # files. Authentik usernames are unique, but friends pick theirs at
+      # sign-up: make new Nextcloud accounts through Authentik only, never as
+      # local accounts, or a friend could take one by picking its name.
+      user_oidc.soft_auto_provision = true;
     };
   };
 
