@@ -133,7 +133,7 @@ in
       # upstream's image plus SussyNet's login changes
       SL_BUILD = "${./build}";
       # Authentik group whose members are SimpleLogin admins (services/authentik)
-      SL_ADMIN_GROUP = "admins";
+      SL_ADMIN_GROUP = "admin-simplelogin";
       SL_UID = toString uid;
       SL_SUBNET = subnet;
       SL_POSTFIX = gateway;

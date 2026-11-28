@@ -1,9 +1,9 @@
 # SimpleLogin's "Log in with SSO": an OIDC provider and application that only
-# members of the "simplelogin" and "admins" groups can use. Add people in the
-# admin interface (Directory > Groups). Their first login creates their
-# SimpleLogin account, with their Authentik email as its mailbox. Members of
-# "admins" are also SimpleLogin admins, updated on each SSO login (see
-# services/simplelogin/build/patch-oidc.py); it doesn't make them Authentik admins.
+# members of the "simplelogin" and "admin-simplelogin" groups can use. Add
+# people in the admin interface (Directory > Groups). Their first login creates
+# their SimpleLogin account, with their Authentik email as its mailbox. Members
+# of "admin-simplelogin" are also SimpleLogin admins, updated on each SSO login
+# (services/simplelogin/build/patch-oidc.py). It gives no rights in Authentik.
 #
 # The client secret is generated on the server (services/authentik/default.nix,
 # simplelogin-oidc-secret) and reaches this file through the worker's
@@ -20,10 +20,11 @@ entries:
       is_superuser: false
 
   - model: authentik_core.group
-    id: admins
+    id: admin-simplelogin
     identifiers:
-      name: admins
+      name: admin-simplelogin
     attrs:
+      # SimpleLogin admin only, never Authentik admin
       is_superuser: false
 
   - model: authentik_providers_oauth2.oauth2provider
@@ -70,5 +71,17 @@ entries:
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf application
-      group: !KeyOf admins
+      group: !KeyOf admin-simplelogin
       order: 10
+
+  # The first version let the general "admins" group in (it now belongs to
+  # Nextcloud, services/authentik/blueprints/nextcloud.yaml); remove only that
+  # binding, not the group
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf application
+      group: !Find [authentik_core.group, [name, admins]]
+      order: 10
+    conditions:
+      - !Find [authentik_core.group, [name, admins]]
+    state: absent
