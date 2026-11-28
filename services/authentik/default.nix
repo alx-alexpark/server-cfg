@@ -112,6 +112,55 @@ let
         "--security-opt=no-new-privileges"
       ];
     };
+
+  # SussyNet branding. Blueprints are applied by the worker when their file
+  # changes; the version line makes this one apply again after each upgrade,
+  # in case an upgrade's default flows put "authentik" back in the titles.
+  title = "SussyNet Authentication Services";
+  brandingUrl = "https://${domain}/sussynet-branding";
+  brandingBlueprint = pkgs.writeText "sussynet-branding.yaml" ''
+    # authentik ${version}
+    version: 1
+    metadata:
+      name: SussyNet branding
+    entries:
+      - model: authentik_brands.brand
+        identifiers:
+          domain: authentik-default
+        conditions:
+          - !Find [authentik_brands.brand, [domain, authentik-default]]
+        attrs:
+          branding_title: ${title}
+          branding_logo: ${brandingUrl}/logo.png
+          branding_favicon: ${brandingUrl}/favicon.png
+          attributes:
+            settings:
+              theme:
+                # the logo is made for a light background
+                base: light
+      - model: authentik_flows.flow
+        identifiers:
+          slug: default-authentication-flow
+        conditions:
+          - !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+        attrs:
+          name: ${title}
+          title: Welcome to ${title}
+      - model: authentik_flows.flow
+        identifiers:
+          slug: default-source-authentication
+        conditions:
+          - !Find [authentik_flows.flow, [slug, default-source-authentication]]
+        attrs:
+          title: Welcome to ${title}
+      - model: authentik_flows.flow
+        identifiers:
+          slug: default-source-enrollment
+        conditions:
+          - !Find [authentik_flows.flow, [slug, default-source-enrollment]]
+        attrs:
+          title: Welcome to ${title}! Please select a username.
+  '';
 in
 {
   imports = [ ../update-checker ];
@@ -214,10 +263,17 @@ in
     # The worker serves its own health and metrics endpoints on the same default
     # ports as the server. They share the pod's network, so it would take 9000
     # and answer every page with a 404; keep it on the pod's loopback instead.
-    authentik-worker = authentik "worker" {
-      AUTHENTIK_LISTEN__HTTP = "127.0.0.1:9100";
-      AUTHENTIK_LISTEN__METRICS = "127.0.0.1:9301";
-    };
+    authentik-worker =
+      let
+        worker = authentik "worker" {
+          AUTHENTIK_LISTEN__HTTP = "127.0.0.1:9100";
+          AUTHENTIK_LISTEN__METRICS = "127.0.0.1:9301";
+        };
+      in
+      worker
+      // {
+        volumes = worker.volumes ++ [ "${brandingBlueprint}:/blueprints/sussynet/branding.yaml:ro" ];
+      };
   };
 
   services.update-checker.releases.Authentik = {
@@ -233,6 +289,13 @@ in
       ?Content-Security-Policy "default-src 'self'; img-src https: data:; object-src 'none'; frame-ancestors 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
       ?Strict-Transport-Security "max-age=31536000"
     }
-    reverse_proxy 127.0.0.1:9000
+    # the logo and favicon the brand points at
+    handle_path /sussynet-branding/* {
+      root * ${./branding}
+      file_server
+    }
+    handle {
+      reverse_proxy 127.0.0.1:9000
+    }
   '';
 }
