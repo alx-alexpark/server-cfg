@@ -14,7 +14,8 @@ let
   # Authentik runs in rootless Podman as this unprivileged user, not under the
   # Docker daemon: there is no container socket anywhere, and root in its
   # containers is just this user on the host (everything else maps to its
-  # subordinate uids). No outposts, so nothing needs a socket either.
+  # subordinate uids). No outposts (the embedded one is off too), so nothing
+  # needs a socket either.
   user = "authentik";
   uid = 2003;
   home = "/var/lib/authentik";
@@ -22,22 +23,47 @@ let
 
   podman = "${config.virtualisation.podman.package}/bin/podman";
 
+  # Django's password hash format, which AUTHENTIK_BOOTSTRAP_PASSWORD_HASH takes;
+  # the same thing `ak hash_password` prints. Reads the password on stdin.
+  hashPassword = pkgs.writeText "authentik-hash-password.py" ''
+    import base64, hashlib, secrets, string, sys
+
+    password = sys.stdin.readline().rstrip("\n")
+    salt = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(22))
+    iterations = 1000000
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations)
+    print("pbkdf2_sha256$%d$%s$%s" % (iterations, salt, base64.b64encode(digest).decode()))
+  '';
+
   # The repo is public, so these are generated on the server once. The first
   # login is akadmin with the bootstrap password:
   #   sudo cat /var/lib/authentik/secrets/bootstrap-password
   # It is only used when the database is created, so there is no open setup page.
+  # Authentik only gets its hash, as its docs recommend; delete the file once
+  # akadmin's password is changed.
   generateSecrets = pkgs.writeShellScript "authentik-secrets" ''
     set -eu
     umask 077
     openssl=${pkgs.openssl}/bin/openssl
+    hash_password() { ${pkgs.python3}/bin/python3 -I ${hashPassword}; }
     install -d -m 700 -o ${user} -g ${user} ${secretsDir}
     if [ ! -f ${secretsDir}/authentik.env ]; then
       pw=$($openssl rand -hex 32)
       bootstrap=$($openssl rand -base64 24)
       printf 'POSTGRES_PASSWORD=%s\n' "$pw" > ${secretsDir}/db.env
-      printf 'AUTHENTIK_POSTGRESQL__PASSWORD=%s\nAUTHENTIK_SECRET_KEY=%s\nAUTHENTIK_BOOTSTRAP_PASSWORD=%s\n' \
-        "$pw" "$($openssl rand -hex 50)" "$bootstrap" > ${secretsDir}/authentik.env
+      printf 'AUTHENTIK_POSTGRESQL__PASSWORD=%s\nAUTHENTIK_SECRET_KEY=%s\nAUTHENTIK_BOOTSTRAP_PASSWORD_HASH=%s\n' \
+        "$pw" "$($openssl rand -hex 50)" "$(printf '%s\n' "$bootstrap" | hash_password)" \
+        > ${secretsDir}/authentik.env
       printf '%s\n' "$bootstrap" > ${secretsDir}/bootstrap-password
+    fi
+    # Installs from before kept the plain password in the env file; swap it for
+    # its hash. Authentik only reads either one when it creates akadmin.
+    if grep -q '^AUTHENTIK_BOOTSTRAP_PASSWORD=' ${secretsDir}/authentik.env; then
+      hash=$(sed -n 's/^AUTHENTIK_BOOTSTRAP_PASSWORD=//p' ${secretsDir}/authentik.env | hash_password)
+      tmp=$(mktemp -p ${secretsDir})
+      grep -v '^AUTHENTIK_BOOTSTRAP_PASSWORD=' ${secretsDir}/authentik.env > "$tmp"
+      printf 'AUTHENTIK_BOOTSTRAP_PASSWORD_HASH=%s\n' "$hash" >> "$tmp"
+      mv "$tmp" ${secretsDir}/authentik.env
     fi
     chown ${user}:${user} ${secretsDir}/*
     chmod 400 ${secretsDir}/*
@@ -64,9 +90,17 @@ let
         AUTHENTIK_DISABLE_STARTUP_ANALYTICS = "true";
         AUTHENTIK_ERROR_REPORTING__ENABLED = "false";
         # The pod's only published port is on the host's loopback, so whatever
-        # connects is Caddy (or root on the host). Podman's port forwarding can
-        # change the source address, so trust the forwarded headers from anywhere.
+        # connects is Caddy (or root on the host): no untrusted client can reach
+        # it directly, which is what the docs ask of this list. pasta hands those
+        # connections to the pod from the server's public address, which comes
+        # from DHCP, so trust the forwarded headers from anywhere.
         AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS = "0.0.0.0/0,::/0";
+        # Only serves proxy providers, and there are none; no outposts at all
+        AUTHENTIK_OUTPOSTS__DISABLE_EMBEDDED_OUTPOST = "true";
+        # The setup page that asks for it is skipped (see generateSecrets), and
+        # an empty Base URL falls back to the embedded outpost. Only fills in the
+        # system setting while it is empty; it never overwrites one.
+        AUTHENTIK_WEB__BASE_URL = "https://${domain}";
       }
       // extraEnvironment;
       environmentFiles = [ "${secretsDir}/authentik.env" ];
@@ -191,7 +225,14 @@ in
     current = "version/${version}";
   };
 
+  # Headers from Authentik's hardening guide that it doesn't send itself. The
+  # CSP is the one the guide lists; "?" only adds it where Authentik set none,
+  # so its stricter one on uploaded files stays.
   services.caddy.virtualHosts.${domain}.extraConfig = ''
+    header {
+      ?Content-Security-Policy "default-src 'self'; img-src https: data:; object-src 'none'; frame-ancestors 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+      ?Strict-Transport-Security "max-age=31536000"
+    }
     reverse_proxy 127.0.0.1:9000
   '';
 }
