@@ -50,7 +50,7 @@ let
   };
 
   authentik =
-    command:
+    command: extraEnvironment:
     common
     // {
       image = "ghcr.io/goauthentik/server:${version}";
@@ -67,7 +67,8 @@ let
         # connects is Caddy (or root on the host). Podman's port forwarding can
         # change the source address, so trust the forwarded headers from anywhere.
         AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS = "0.0.0.0/0,::/0";
-      };
+      }
+      // extraEnvironment;
       environmentFiles = [ "${secretsDir}/authentik.env" ];
       # :U hands the directory to the container's uid
       volumes = [ "${home}/data:/data:U" ];
@@ -175,8 +176,14 @@ in
         "--security-opt=no-new-privileges"
       ];
     };
-    authentik-server = authentik "server";
-    authentik-worker = authentik "worker";
+    authentik-server = authentik "server" { };
+    # The worker serves its own health and metrics endpoints on the same default
+    # ports as the server. They share the pod's network, so it would take 9000
+    # and answer every page with a 404; keep it on the pod's loopback instead.
+    authentik-worker = authentik "worker" {
+      AUTHENTIK_LISTEN__HTTP = "127.0.0.1:9100";
+      AUTHENTIK_LISTEN__METRICS = "127.0.0.1:9301";
+    };
   };
 
   services.update-checker.releases.Authentik = {
