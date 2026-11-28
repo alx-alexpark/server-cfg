@@ -160,8 +160,6 @@ let
               theme:
                 # the logo is made for a light background
                 base: light
-                # the signed-in pages take CSS, so the tile really repeats there
-                background: "background-color: #191a1c; background-image: url(${brandingUrl}/tile.webp); background-repeat: repeat;"
       - model: authentik_flows.flow
         identifiers:
           slug: default-authentication-flow
