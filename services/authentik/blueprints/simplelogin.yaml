@@ -1,7 +1,9 @@
 # SimpleLogin's "Log in with SSO": an OIDC provider and application that only
-# members of the "simplelogin" group can use. Add people to that group in the
-# admin interface (Directory > Groups > simplelogin). Their first login creates
-# their SimpleLogin account, with their Authentik email as its mailbox.
+# members of the "simplelogin" and "admins" groups can use. Add people in the
+# admin interface (Directory > Groups). Their first login creates their
+# SimpleLogin account, with their Authentik email as its mailbox. Members of
+# "admins" are also SimpleLogin admins, updated on each SSO login (see
+# services/simplelogin/build/patch-oidc.py); it doesn't make them Authentik admins.
 #
 # The client secret is generated on the server (services/authentik/default.nix,
 # simplelogin-oidc-secret) and reaches this file through the worker's
@@ -14,6 +16,13 @@ entries:
     id: group
     identifiers:
       name: simplelogin
+    attrs:
+      is_superuser: false
+
+  - model: authentik_core.group
+    id: admins
+    identifiers:
+      name: admins
     attrs:
       is_superuser: false
 
@@ -51,9 +60,15 @@ entries:
       meta_description: Email aliases
       policy_engine_mode: any
 
-  # Without a binding every user could use it; with this one, only the group
+  # Without bindings every user could use it; with these, only the two groups
+  # (policy_engine_mode any: either one is enough)
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf application
       group: !KeyOf group
       order: 0
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf application
+      group: !KeyOf admins
+      order: 10

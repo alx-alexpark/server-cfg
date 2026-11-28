@@ -130,6 +130,10 @@ in
     environment = {
       SL_DOMAIN = domain;
       SL_VERSION = version;
+      # upstream's image plus SussyNet's login changes
+      SL_BUILD = "${./build}";
+      # Authentik group whose members are SimpleLogin admins (services/authentik)
+      SL_ADMIN_GROUP = "admins";
       SL_UID = toString uid;
       SL_SUBNET = subnet;
       SL_POSTFIX = gateway;
@@ -140,8 +144,7 @@ in
       Type = "oneshot";
       RemainAfterExit = true;
       ExecStartPre = generateSecrets;
-      # --build applies the patch in docker-compose.yml (cached after the first
-      # time); Postgres is pulled on every start, SimpleLogin itself is pinned
+      # --build applies build/patch-oidc.py (cached after the first time); Postgres is pulled on every start, SimpleLogin itself is pinned
       ExecStart = "${compose} up -d --build --remove-orphans";
       ExecStop = "${compose} down";
     };

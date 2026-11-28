@@ -13,7 +13,7 @@ networks:
         - subnet: ${SL_SUBNET}
 
 x-app: &app
-  # upstream's image with one line changed; built by the migrate service below
+  # upstream's image with SussyNet's login changes; built by the migrate service below
   image: localhost/simplelogin-sussynet:${SL_VERSION}
   pull_policy: never
   # never root; the keys and data directories belong to this uid on the host
@@ -41,12 +41,19 @@ x-app: &app
     - OPENID_PUBLIC_KEY_PATH=/keys/jwtRS256.key.pub
     - GNUPGHOME=/sl/pgp
     - LOCAL_FILE_UPLOAD=1
-    # No password sign-ups. Authentik login still creates accounts (see the
-    # patch below): Authentik decides who may use SimpleLogin.
+    # No password sign-ups. Authentik login still creates accounts
+    # (build/patch-oidc.py): Authentik decides who may use SimpleLogin.
     - DISABLE_REGISTRATION=1
     - DISABLE_ONBOARDING=true
     - CONNECT_WITH_OIDC_ICON=fa-key
     - OIDC_WELL_KNOWN_URL=${SL_OIDC_WELL_KNOWN_URL}
+    # Members of this Authentik group are SimpleLogin admins, updated on every
+    # SSO login (build/patch-oidc.py)
+    - SUSSYNET_ADMIN_GROUP=${SL_ADMIN_GROUP}
+    # The admin panel also wants a hardware security key registered in
+    # SimpleLogin, touched again after an hour
+    - ADMIN_FIDO_REQUIRED=hardware
+    - ADMIN_GRACE_PERIOD=3600
   env_file:
     # POSTGRES_PASSWORD, DB_URI, FLASK_SECRET, generated on the server
     - /var/lib/secrets/simplelogin.env
@@ -88,18 +95,12 @@ services:
   # One-off steps on every start: database migrations, then SimpleLogin's own init
   migrate:
     <<: *app
-    # SimpleLogin's DISABLE_REGISTRATION closes every way to make an account,
-    # Authentik login included. Drop it from the Authentik login only, so
-    # password sign-up stays closed. The build fails if upstream changes the line.
+    # Builds the image every app container runs (build/Dockerfile)
     pull_policy: build
     build:
-      dockerfile_inline: |
-        FROM docker.io/simplelogin/app-ci:${SL_VERSION}
-        RUN set -eu; f=app/auth/views/oidc.py; \
-            grep -qx '    if not user and config.DISABLE_REGISTRATION:' "$$f"; \
-            sed -i 's/^    if not user and config.DISABLE_REGISTRATION:$$/    if False:  # sussynet: Authentik decides who may sign up/' "$$f"; \
-            grep -q 'if False:  # sussynet' "$$f"; \
-            python -m compileall -q "$$f"
+      context: ${SL_BUILD}
+      args:
+        SL_VERSION: ${SL_VERSION}
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     depends_on:
