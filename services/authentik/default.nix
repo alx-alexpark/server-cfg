@@ -113,7 +113,7 @@ let
       ];
     };
 
-  # SussyNet branding. Blueprints are applied by the worker when their file
+  # SussyNet branding, plus required two-factor. Blueprints are applied by the worker when their file
   # changes; the version line makes this one apply again after each upgrade,
   # in case an upgrade's default flows put "authentik" back in the titles.
   title = "SussyNet Authentication Services";
@@ -145,21 +145,34 @@ let
           - !Find [authentik_flows.flow, [slug, default-authentication-flow]]
         attrs:
           name: ${title}
-          title: Welcome to ${title}
+          title: Sign in
       - model: authentik_flows.flow
         identifiers:
           slug: default-source-authentication
         conditions:
           - !Find [authentik_flows.flow, [slug, default-source-authentication]]
         attrs:
-          title: Welcome to ${title}
+          title: Sign in
       - model: authentik_flows.flow
         identifiers:
           slug: default-source-enrollment
         conditions:
           - !Find [authentik_flows.flow, [slug, default-source-enrollment]]
         attrs:
-          title: Welcome to ${title}! Please select a username.
+          title: Choose a username
+
+      # Two-factor is optional by default. Make it required: anyone without a
+      # passkey/security key or TOTP app sets one up before they get in.
+      - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
+        identifiers:
+          name: default-authentication-mfa-validation
+        conditions:
+          - !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, default-authentication-mfa-validation]]
+        attrs:
+          not_configured_action: configure
+          configuration_stages:
+            - !Find [authentik_stages_authenticator_webauthn.authenticatorwebauthnstage, [name, default-authenticator-webauthn-setup]]
+            - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]
   '';
 in
 {
