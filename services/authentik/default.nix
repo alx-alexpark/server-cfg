@@ -285,7 +285,11 @@ in
       in
       worker
       // {
-        volumes = worker.volumes ++ [ "${brandingBlueprint}:/blueprints/sussynet/branding.yaml:ro" ];
+        # our blueprints, read-only; the worker applies them when they change
+        volumes = worker.volumes ++ [
+          "${brandingBlueprint}:/blueprints/sussynet/branding.yaml:ro"
+          "${./blueprints/enrollment.yaml}:/blueprints/sussynet/enrollment.yaml:ro"
+        ];
       };
   };
 

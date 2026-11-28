@@ -1,0 +1,164 @@
+# Invite-only sign-up for friends. Make a link in the admin interface under
+# Directory > Invitations > Create: pick the flow "sussynet-enrollment", tick
+# "Single use", set an expiry, and send the link it shows. Without a valid
+# invitation the flow stops at the first step, so there is no open sign-up.
+#
+# The friend picks a username, gives their name, email and a password, sets up
+# a passkey/security key or TOTP app, and is signed in. They land in the
+# "friends" group, which has no admin rights.
+version: 1
+metadata:
+  name: SussyNet enrollment
+entries:
+  - model: authentik_core.group
+    id: friends
+    identifiers:
+      name: friends
+    attrs:
+      is_superuser: false
+
+  - model: authentik_flows.flow
+    id: flow
+    identifiers:
+      slug: sussynet-enrollment
+    attrs:
+      name: SussyNet enrollment
+      title: Create your account
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  - model: authentik_stages_invitation.invitationstage
+    id: invitation
+    identifiers:
+      name: sussynet-enrollment-invitation
+    attrs:
+      continue_flow_without_invitation: false
+
+  - model: authentik_stages_prompt.prompt
+    id: field-username
+    identifiers:
+      name: sussynet-enrollment-field-username
+    attrs:
+      field_key: username
+      label: Username
+      type: username
+      required: true
+      placeholder: Username
+      order: 0
+  - model: authentik_stages_prompt.prompt
+    id: field-name
+    identifiers:
+      name: sussynet-enrollment-field-name
+    attrs:
+      field_key: name
+      label: Name
+      type: text
+      required: true
+      placeholder: Name
+      order: 1
+  - model: authentik_stages_prompt.prompt
+    id: field-email
+    identifiers:
+      name: sussynet-enrollment-field-email
+    attrs:
+      field_key: email
+      label: Email
+      type: email
+      required: true
+      placeholder: Email
+      order: 2
+  - model: authentik_stages_prompt.prompt
+    id: field-password
+    identifiers:
+      name: sussynet-enrollment-field-password
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      placeholder: Password
+      sub_text: At least 12 characters, not a common or leaked password.
+      order: 3
+  - model: authentik_stages_prompt.prompt
+    id: field-password-repeat
+    identifiers:
+      name: sussynet-enrollment-field-password-repeat
+    attrs:
+      field_key: password_repeat
+      label: Password (again)
+      type: password
+      required: true
+      placeholder: Password (again)
+      order: 4
+
+  # Long, not guessable, and not in a known breach. The breach check sends only
+  # the first 5 characters of the password's SHA-1 hash to Have I Been Pwned.
+  - model: authentik_policies_password.passwordpolicy
+    id: password-policy
+    identifiers:
+      name: sussynet-enrollment-password-policy
+    attrs:
+      password_field: password
+      check_static_rules: true
+      length_min: 12
+      check_zxcvbn: true
+      zxcvbn_score_threshold: 3
+      check_have_i_been_pwned: true
+      hibp_allowed_count: 0
+      error_message: Use a longer password that isn't common or leaked.
+
+  - model: authentik_stages_prompt.promptstage
+    id: prompt
+    identifiers:
+      name: sussynet-enrollment-prompt
+    attrs:
+      fields:
+        - !KeyOf field-username
+        - !KeyOf field-name
+        - !KeyOf field-email
+        - !KeyOf field-password
+        - !KeyOf field-password-repeat
+      validation_policies:
+        - !KeyOf password-policy
+
+  - model: authentik_stages_user_write.userwritestage
+    id: write
+    identifiers:
+      name: sussynet-enrollment-write
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: false
+      create_users_group: !KeyOf friends
+      user_type: internal
+
+  - model: authentik_stages_user_login.userloginstage
+    id: login
+    identifiers:
+      name: sussynet-enrollment-login
+
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf invitation
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf prompt
+      order: 20
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf write
+      order: 30
+  # The login flow's two-factor stage, which makes them set one up
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, default-authentication-mfa-validation]]
+      order: 40
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf login
+      order: 50
