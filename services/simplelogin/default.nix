@@ -107,7 +107,9 @@ in
 
   systemd.tmpfiles.rules = [
     "d /var/lib/simplelogin 0755 root root -"
-    "d /var/lib/simplelogin/postgres 0700 root root -"
+    # only on creation: Postgres's entrypoint gives it to the container's
+    # postgres user, and a switch must not take it back while it runs
+    "d /var/lib/simplelogin/postgres :0700 :root :root -"
     "d ${keysDir} 0750 root simplelogin -"
     "d /var/lib/simplelogin/pgp 0700 simplelogin simplelogin -"
     "d /var/lib/simplelogin/upload 0700 simplelogin simplelogin -"

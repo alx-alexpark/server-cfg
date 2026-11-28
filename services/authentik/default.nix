@@ -239,9 +239,14 @@ in
   };
   users.groups.${user}.gid = uid;
 
+  # ":" sets owner and mode only when the directory is created. Postgres's
+  # entrypoint and :U then hand them to the container's own uids (subuids on
+  # the host); without ":", every switch reset them to this user and the
+  # running Postgres lost access to its own files ("could not open file
+  # global/pg_filenode.map: Permission denied").
   systemd.tmpfiles.rules = [
-    "d ${home}/postgres 0700 ${user} ${user} -"
-    "d ${home}/data 0700 ${user} ${user} -"
+    "d ${home}/postgres :0700 :${user} :${user} -"
+    "d ${home}/data :0700 :${user} :${user} -"
   ];
 
   virtualisation.oci-containers.backend = "podman";
