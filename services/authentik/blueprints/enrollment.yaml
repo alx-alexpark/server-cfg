@@ -3,9 +3,10 @@
 # "Single use", set an expiry, and send the link it shows. Without a valid
 # invitation the flow stops at the first step, so there is no open sign-up.
 #
-# The friend picks a username, gives their name, email and a password, sets up
-# a passkey/security key or TOTP app, and is signed in. They land in the
-# "friends" group, which has no admin rights.
+# The friend picks a username, gives their name, email and a password, and is
+# sent to the login page. Their first login has them set up a passkey/security
+# key or TOTP app (the login flow requires one). They land in the "friends"
+# group, which has no admin rights.
 version: 1
 metadata:
   name: SussyNet enrollment
@@ -148,10 +149,22 @@ entries:
       create_users_group: !KeyOf friends
       user_type: internal
 
+  # Earlier versions signed them in here and set up two-factor; both happen at
+  # the login page now. Removing the stage also removes its binding.
   - model: authentik_stages_user_login.userloginstage
-    id: login
     identifiers:
       name: sussynet-enrollment-login
+    state: absent
+
+  # Off to the login page, as a fresh start: nothing from sign-up carries over
+  - model: authentik_stages_redirect.redirectstage
+    id: to-login
+    identifiers:
+      name: sussynet-enrollment-to-login
+    attrs:
+      mode: flow
+      target_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      keep_context: false
 
   - model: authentik_flows.flowstagebinding
     identifiers:
@@ -168,14 +181,15 @@ entries:
       target: !KeyOf flow
       stage: !KeyOf write
       order: 30
-  # The login flow's two-factor stage, which makes them set one up
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf to-login
+      order: 60
+  # Two-factor setup used to be bound here; the login page does it now
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !KeyOf flow
       stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, default-authentication-mfa-validation]]
       order: 40
-  - model: authentik_flows.flowstagebinding
-    identifiers:
-      target: !KeyOf flow
-      stage: !KeyOf login
-      order: 50
+    state: absent
