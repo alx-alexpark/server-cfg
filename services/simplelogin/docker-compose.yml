@@ -13,7 +13,9 @@ networks:
         - subnet: ${SL_SUBNET}
 
 x-app: &app
-  image: docker.io/simplelogin/app-ci:${SL_VERSION}
+  # upstream's image with one line changed; built by the migrate service below
+  image: localhost/simplelogin-sussynet:${SL_VERSION}
+  pull_policy: never
   # never root; the keys and data directories belong to this uid on the host
   user: "${SL_UID}:${SL_UID}"
   read_only: true
@@ -39,8 +41,8 @@ x-app: &app
     - OPENID_PUBLIC_KEY_PATH=/keys/jwtRS256.key.pub
     - GNUPGHOME=/sl/pgp
     - LOCAL_FILE_UPLOAD=1
-    # no sign-ups: accounts are made with simplelogin-add-user, and Authentik
-    # login only works for accounts that already exist
+    # No password sign-ups. Authentik login still creates accounts (see the
+    # patch below): Authentik decides who may use SimpleLogin.
     - DISABLE_REGISTRATION=1
     - DISABLE_ONBOARDING=true
     - CONNECT_WITH_OIDC_ICON=fa-key
@@ -48,7 +50,7 @@ x-app: &app
   env_file:
     # POSTGRES_PASSWORD, DB_URI, FLASK_SECRET, generated on the server
     - /var/lib/secrets/simplelogin.env
-    # OIDC_CLIENT_ID and OIDC_CLIENT_SECRET from Authentik, added by hand
+    # OIDC_CLIENT_ID and OIDC_CLIENT_SECRET, generated with Authentik's side
     - path: /var/lib/secrets/simplelogin-oidc.env
       required: false
   volumes:
@@ -63,6 +65,8 @@ x-app: &app
 services:
   db:
     image: docker.io/library/postgres:17-alpine
+    # restarts pick up Postgres patch releases
+    pull_policy: always
     environment:
       - POSTGRES_USER=simplelogin
       - POSTGRES_DB=simplelogin
@@ -84,6 +88,18 @@ services:
   # One-off steps on every start: database migrations, then SimpleLogin's own init
   migrate:
     <<: *app
+    # SimpleLogin's DISABLE_REGISTRATION closes every way to make an account,
+    # Authentik login included. Drop it from the Authentik login only, so
+    # password sign-up stays closed. The build fails if upstream changes the line.
+    pull_policy: build
+    build:
+      dockerfile_inline: |
+        FROM docker.io/simplelogin/app-ci:${SL_VERSION}
+        RUN set -eu; f=app/auth/views/oidc.py; \
+            grep -qx '    if not user and config.DISABLE_REGISTRATION:' "$$f"; \
+            sed -i 's/^    if not user and config.DISABLE_REGISTRATION:$$/    if False:  # sussynet: Authentik decides who may sign up/' "$$f"; \
+            grep -q 'if False:  # sussynet' "$$f"; \
+            python -m compileall -q "$$f"
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     depends_on:

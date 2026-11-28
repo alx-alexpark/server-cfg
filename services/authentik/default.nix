@@ -69,6 +69,25 @@ let
     chmod 400 ${secretsDir}/*
   '';
 
+  # SimpleLogin's OIDC client secret, shared by both sides: SimpleLogin reads
+  # slOidcEnv (root-only), and the worker gets a copy to hand to the blueprint.
+  slOidcEnv = "/var/lib/secrets/simplelogin-oidc.env";
+  generateSlOidcSecret = pkgs.writeShellScript "simplelogin-oidc-secret" ''
+    set -eu
+    umask 077
+    install -d -m 700 "$(dirname ${slOidcEnv})"
+    # anything else here is from before the provider was made by the blueprint
+    if ! grep -qx 'OIDC_CLIENT_ID=simplelogin' ${slOidcEnv} 2>/dev/null; then
+      printf 'OIDC_CLIENT_ID=simplelogin\nOIDC_CLIENT_SECRET=%s\n' \
+        "$(${pkgs.openssl}/bin/openssl rand -hex 48)" > ${slOidcEnv}
+    fi
+    install -d -m 700 -o ${user} -g ${user} ${secretsDir}
+    printf 'SIMPLELOGIN_OIDC_CLIENT_SECRET=%s\n' "$(sed -n 's/^OIDC_CLIENT_SECRET=//p' ${slOidcEnv})" \
+      > ${secretsDir}/simplelogin-oidc.env
+    chown ${user}:${user} ${secretsDir}/simplelogin-oidc.env
+    chmod 400 ${secretsDir}/simplelogin-oidc.env
+  '';
+
   common = {
     podman.user = user;
     # picks up Postgres patch releases on restart; Authentik itself is pinned
@@ -133,11 +152,16 @@ let
           branding_title: ${title}
           branding_logo: ${brandingUrl}/logo.png
           branding_favicon: ${brandingUrl}/favicon.png
+          # Login pages stretch their background over the window instead of
+          # repeating it, so they get the tile pre-repeated into a large image
+          branding_default_flow_background: ${brandingUrl}/background.webp
           attributes:
             settings:
               theme:
                 # the logo is made for a light background
                 base: light
+                # the signed-in pages take CSS, so the tile really repeats there
+                background: "background-color: #191a1c; background-image: url(${brandingUrl}/tile.webp); background-repeat: repeat;"
       - model: authentik_flows.flow
         identifiers:
           slug: default-authentication-flow
@@ -210,6 +234,16 @@ in
   # Postgres, the server and the worker share one pod, so they talk over its
   # localhost and only the web port leaves it.
   systemd.services = {
+    simplelogin-oidc-secret = {
+      description = "Generate SimpleLogin's OIDC client secret for Authentik";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = generateSlOidcSecret;
+      };
+    };
+
     authentik-pod = {
       description = "Podman pod for Authentik";
       wantedBy = [ "multi-user.target" ];
@@ -217,10 +251,12 @@ in
         "network-online.target"
         "linger-users.service"
       ];
+      requires = [ "simplelogin-oidc-secret.service" ];
       after = [
         "network-online.target"
         "linger-users.service"
         "user@${toString uid}.service"
+        "simplelogin-oidc-secret.service"
       ];
       environment.HOME = home;
       unitConfig.RequiresMountsFor = "/run/user/${toString uid}/containers";
@@ -285,10 +321,13 @@ in
       in
       worker
       // {
+        # SIMPLELOGIN_OIDC_CLIENT_SECRET, for blueprints/simplelogin.yaml
+        environmentFiles = worker.environmentFiles ++ [ "${secretsDir}/simplelogin-oidc.env" ];
         # our blueprints, read-only; the worker applies them when they change
         volumes = worker.volumes ++ [
           "${brandingBlueprint}:/blueprints/sussynet/branding.yaml:ro"
           "${./blueprints/enrollment.yaml}:/blueprints/sussynet/enrollment.yaml:ro"
+          "${./blueprints/simplelogin.yaml}:/blueprints/sussynet/simplelogin.yaml:ro"
         ];
       };
   };
@@ -306,7 +345,7 @@ in
       ?Content-Security-Policy "default-src 'self'; img-src https: data:; object-src 'none'; frame-ancestors 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
       ?Strict-Transport-Security "max-age=31536000"
     }
-    # the logo and favicon the brand points at
+    # the logo, favicon and backgrounds the brand points at
     handle_path /sussynet-branding/* {
       root * ${./branding}
       file_server

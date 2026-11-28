@@ -107,6 +107,22 @@ entries:
       hibp_allowed_count: 0
       error_message: Use a longer password that isn't common or leaked.
 
+  # Emails must be unique: SimpleLogin finds accounts by the email Authentik
+  # sends, so a second user with your address would get into your account.
+  - model: authentik_policies_expression.expressionpolicy
+    id: unique-email
+    identifiers:
+      name: sussynet-enrollment-unique-email
+    attrs:
+      expression: |
+        from authentik.core.models import User
+
+        email = request.context.get("prompt_data", {}).get("email", "").strip()
+        if User.objects.filter(email__iexact=email).exists():
+            ak_message("That email address is already used by another account.")
+            return False
+        return True
+
   - model: authentik_stages_prompt.promptstage
     id: prompt
     identifiers:
@@ -120,6 +136,7 @@ entries:
         - !KeyOf field-password-repeat
       validation_policies:
         - !KeyOf password-policy
+        - !KeyOf unique-email
 
   - model: authentik_stages_user_write.userwritestage
     id: write

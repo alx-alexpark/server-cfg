@@ -119,9 +119,14 @@ in
     after = [
       "docker.service"
       "network-online.target"
+      # OIDC_CLIENT_ID/SECRET, shared with Authentik (services/authentik)
+      "simplelogin-oidc-secret.service"
     ];
     requires = [ "docker.service" ];
-    wants = [ "network-online.target" ];
+    wants = [
+      "network-online.target"
+      "simplelogin-oidc-secret.service"
+    ];
     environment = {
       SL_DOMAIN = domain;
       SL_VERSION = version;
@@ -135,8 +140,9 @@ in
       Type = "oneshot";
       RemainAfterExit = true;
       ExecStartPre = generateSecrets;
-      # --pull so restarts pick up Postgres patch releases; SimpleLogin itself is pinned
-      ExecStart = "${compose} up -d --pull always --remove-orphans";
+      # --build applies the patch in docker-compose.yml (cached after the first
+      # time); Postgres is pulled on every start, SimpleLogin itself is pinned
+      ExecStart = "${compose} up -d --build --remove-orphans";
       ExecStop = "${compose} down";
     };
   };
