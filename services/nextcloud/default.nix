@@ -98,7 +98,7 @@ let
     "--mapping-uid=preferred_username"
     "--mapping-display-name=name"
     "--mapping-email=email"
-    # Admin rights follow the Authentik "admins" group, checked at each login.
+    # Admin rights follow the Authentik "admin-nextcloud" group, checked at each login.
     # Only "admin" is synced, so groups made in Nextcloud are left alone.
     "--group-provisioning=1"
     "--mapping-groups=nextcloud_groups"

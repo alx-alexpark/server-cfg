@@ -1,11 +1,12 @@
 # Nextcloud's "Log in with SussyNet": an OIDC provider and application that only
-# members of the "nextcloud" and "admins" groups can use. Add people in the
-# admin interface (Directory > Groups). Their first login creates their
+# members of the "nextcloud" and "admin-nextcloud" groups can use. Add people
+# in the admin interface (Directory > Groups). Their first login creates their
 # Nextcloud account, named after their Authentik username.
 #
-# Members of "admins" are Nextcloud admins: the nextcloud_groups claim below
-# puts them in Nextcloud's "admin" group, and Nextcloud takes them out of it at
-# their next login once they leave "admins". It doesn't make them Authentik admins.
+# Members of "admin-nextcloud" are Nextcloud admins: the nextcloud_groups claim
+# below puts them in Nextcloud's "admin" group, and Nextcloud takes them out of
+# it at their next login once they leave "admin-nextcloud". It doesn't make
+# them Authentik admins.
 #
 # The client secret is generated on the server (services/authentik/default.nix,
 # nextcloud-oidc-secret) and reaches this file through the worker's
@@ -21,11 +22,10 @@ entries:
     attrs:
       is_superuser: false
 
-  # Shared with blueprints/simplelogin.yaml: admin in each app, not in Authentik
   - model: authentik_core.group
-    id: admins
+    id: admin-nextcloud
     identifiers:
-      name: admins
+      name: admin-nextcloud
     attrs:
       is_superuser: false
 
@@ -41,7 +41,7 @@ entries:
       scope_name: nextcloud
       description: Nextcloud admin rights
       expression: |
-        if ak_is_group_member(request.user, name="admins"):
+        if ak_is_group_member(request.user, name="admin-nextcloud"):
             return {"nextcloud_groups": ["admin"]}
         return {"nextcloud_groups": []}
 
@@ -96,5 +96,12 @@ entries:
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf application
-      group: !KeyOf admins
+      group: !KeyOf admin-nextcloud
       order: 10
+  # The shared "admins" group had access before admin-nextcloud replaced it
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf application
+      group: !Find [authentik_core.group, [name, admins]]
+      order: 10
+    state: absent
