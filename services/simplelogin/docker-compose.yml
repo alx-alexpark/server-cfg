@@ -1,0 +1,126 @@
+# Based on https://github.com/simple-login/app#self-hosting
+# SL_* variables are set by the systemd unit in default.nix. Postfix runs on the
+# host (default.nix): it hands incoming mail to the email handler on
+# 127.0.0.1:20381, and the app sends mail back out through it at SL_POSTFIX.
+networks:
+  # Postgres only: no route out, and nothing else can reach it
+  db:
+    internal: true
+  # A fixed subnet, so Postfix on the host can trust it for relaying
+  app:
+    ipam:
+      config:
+        - subnet: ${SL_SUBNET}
+
+x-app: &app
+  image: docker.io/simplelogin/app-ci:${SL_VERSION}
+  # never root; the keys and data directories belong to this uid on the host
+  user: "${SL_UID}:${SL_UID}"
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  environment:
+    - HOME=/tmp
+    # the uid has no passwd entry in the image; getpass.getuser() falls back to this
+    - USER=simplelogin
+    - URL=https://${SL_DOMAIN}
+    - EMAIL_DOMAIN=${SL_DOMAIN}
+    - SUPPORT_EMAIL=support@${SL_DOMAIN}
+    - EMAIL_SERVERS_WITH_PRIORITY=[(10, "${SL_DOMAIN}.")]
+    - DISABLE_ALIAS_SUFFIX=1
+    - POSTFIX_SERVER=${SL_POSTFIX}
+    # generated on the server; the image's bundled keys are public test keys
+    - DKIM_PRIVATE_KEY_PATH=/keys/dkim.key
+    - OPENID_PRIVATE_KEY_PATH=/keys/jwtRS256.key
+    - OPENID_PUBLIC_KEY_PATH=/keys/jwtRS256.key.pub
+    - GNUPGHOME=/sl/pgp
+    - LOCAL_FILE_UPLOAD=1
+    # no sign-ups: accounts are made with simplelogin-add-user, and Authentik
+    # login only works for accounts that already exist
+    - DISABLE_REGISTRATION=1
+    - DISABLE_ONBOARDING=true
+    - CONNECT_WITH_OIDC_ICON=fa-key
+    - OIDC_WELL_KNOWN_URL=${SL_OIDC_WELL_KNOWN_URL}
+  env_file:
+    # POSTGRES_PASSWORD, DB_URI, FLASK_SECRET, generated on the server
+    - /var/lib/secrets/simplelogin.env
+    # OIDC_CLIENT_ID and OIDC_CLIENT_SECRET from Authentik, added by hand
+    - path: /var/lib/secrets/simplelogin-oidc.env
+      required: false
+  volumes:
+    - /var/lib/simplelogin/keys:/keys:ro
+    - /var/lib/simplelogin/pgp:/sl/pgp
+    - /var/lib/simplelogin/upload:/code/static/upload
+  networks:
+    - db
+    - app
+  restart: always
+
+services:
+  db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      - POSTGRES_USER=simplelogin
+      - POSTGRES_DB=simplelogin
+    # provides POSTGRES_PASSWORD
+    env_file: /var/lib/secrets/simplelogin.env
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simplelogin -d simplelogin"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+    networks:
+      - db
+    volumes:
+      - /var/lib/simplelogin/postgres:/var/lib/postgresql/data
+
+  # One-off steps on every start: database migrations, then SimpleLogin's own init
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  init:
+    <<: *app
+    command: ["python", "init_app.py"]
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  app:
+    <<: *app
+    container_name: simplelogin-app
+    ports:
+      # only ever reachable through Caddy
+      - "127.0.0.1:7777:7777"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  email:
+    <<: *app
+    command: ["python", "email_handler.py"]
+    ports:
+      # only Postfix on the host talks to it
+      - "127.0.0.1:20381:20381"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  job-runner:
+    <<: *app
+    command: ["python", "job_runner.py"]
+    depends_on:
+      init:
+        condition: service_completed_successfully

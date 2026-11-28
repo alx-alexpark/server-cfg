@@ -21,6 +21,8 @@ in
     ../../services/github-mirror
     ../../services/searxng
     ../../services/nextcloud
+    ../../services/simplelogin
+    ../../services/authentik
   ];
 
   # Hetzner Storage Box sub-account over SFTP with an SSH key, as Nextcloud's data
